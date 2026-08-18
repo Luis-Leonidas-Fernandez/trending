@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1720" viewBox="0 0 1400 1720">
+  <defs>
+    <style>
+      .title { font: 700 28px Arial, sans-serif; fill: #111827; }
+      .subtitle { font: 16px Arial, sans-serif; fill: #374151; }
+      .box { fill: #eff6ff; stroke: #2563eb; stroke-width: 2; rx: 14; ry: 14; }
+      .decision { fill: #fef3c7; stroke: #d97706; stroke-width: 2; }
+      .alt { fill: #ecfdf5; stroke: #059669; stroke-width: 2; rx: 14; ry: 14; }
+      .danger { fill: #fef2f2; stroke: #dc2626; stroke-width: 2; rx: 14; ry: 14; }
+      .label { font: 16px Arial, sans-serif; fill: #111827; text-anchor: middle; dominant-baseline: middle; }
+      .small { font: 14px Arial, sans-serif; fill: #374151; }
+      .arrow { stroke: #475569; stroke-width: 2.5; fill: none; marker-end: url(#arrowhead); }
+      .branch { font: 14px Arial, sans-serif; fill: #374151; font-weight: 700; }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#475569" />
+    </marker>
+  </defs>
+
+  <text x="700" y="45" class="title" text-anchor="middle">Flujo general del sistema Trending para Instagram</text>
+  <text x="700" y="75" class="subtitle" text-anchor="middle">Objetivo completo del sistema. Hoy solo está implementada la base del backend.</text>
+
+  <rect x="450" y="110" width="500" height="64" class="box"/>
+  <text x="700" y="142" class="label">1. Usuario solicita crear un post trending</text>
+
+  <rect x="450" y="210" width="500" height="64" class="box"/>
+  <text x="700" y="242" class="label">2. Backend recibe la solicitud</text>
+
+  <rect x="450" y="310" width="500" height="64" class="box"/>
+  <text x="700" y="342" class="label">3. Consultar tendencias en Google Trends o fuente externa</text>
+
+  <rect x="450" y="410" width="500" height="64" class="box"/>
+  <text x="700" y="442" class="label">4. Normalizar respuesta a JSON estructurado</text>
+
+  <polygon points="700,520 860,610 700,700 540,610" class="decision"/>
+  <text x="700" y="598" class="label">5. ¿El tema ya existe</text>
+  <text x="700" y="620" class="label">en la base de datos?</text>
+
+  <rect x="920" y="578" width="300" height="64" class="danger"/>
+  <text x="1070" y="610" class="label">6A. Descartar tema repetido</text>
+
+  <rect x="450" y="760" width="500" height="64" class="alt"/>
+  <text x="700" y="792" class="label">6B. Guardar tema válido en SQLite</text>
+
+  <rect x="450" y="860" width="500" height="64" class="alt"/>
+  <text x="700" y="892" class="label">7. Seleccionar automáticamente un tema válido</text>
+
+  <rect x="450" y="960" width="500" height="64" class="alt"/>
+  <text x="700" y="992" class="label">8. Enviar tema al servicio de IA</text>
+
+  <rect x="90" y="1080" width="260" height="72" class="box"/>
+  <text x="220" y="1110" class="label">9A. Generar imagen</text>
+  <text x="220" y="1132" class="label">para Instagram</text>
+
+  <rect x="410" y="1080" width="260" height="72" class="box"/>
+  <text x="540" y="1118" class="label">9B. Generar caption</text>
+
+  <rect x="730" y="1080" width="260" height="72" class="box"/>
+  <text x="860" y="1118" class="label">9C. Generar hashtags</text>
+
+  <rect x="1050" y="1080" width="260" height="72" class="box"/>
+  <text x="1180" y="1110" class="label">9D. Generar descripción</text>
+
+  <rect x="450" y="1230" width="500" height="64" class="box"/>
+  <text x="700" y="1262" class="label">10. Guardar post generado en SQLite</text>
+
+  <rect x="450" y="1330" width="500" height="64" class="box"/>
+  <text x="700" y="1362" class="label">11. Publicar en Instagram</text>
+
+  <rect x="450" y="1430" width="500" height="64" class="box"/>
+  <text x="700" y="1462" class="label">12. Guardar resultado y logs de publicación</text>
+
+  <rect x="450" y="1530" width="500" height="64" class="box"/>
+  <text x="700" y="1562" class="label">13. Mostrar información en frontend o dashboard</text>
+
+  <path d="M700 174 L700 210" class="arrow"/>
+  <path d="M700 274 L700 310" class="arrow"/>
+  <path d="M700 374 L700 410" class="arrow"/>
+  <path d="M700 474 L700 520" class="arrow"/>
+  <path d="M860 610 L920 610" class="arrow"/>
+  <text x="885" y="595" class="branch">Sí</text>
+  <path d="M1070 642 L1070 720 L700 720 L700 760" class="arrow"/>
+  <text x="1090" y="700" class="small">Buscar otro tema</text>
+  <path d="M700 700 L700 760" class="arrow"/>
+  <text x="715" y="735" class="branch">No</text>
+  <path d="M700 824 L700 860" class="arrow"/>
+  <path d="M700 924 L700 960" class="arrow"/>
+  <path d="M700 1024 L700 1050" class="arrow"/>
+  <path d="M700 1050 L220 1050 L220 1080" class="arrow"/>
+  <path d="M700 1050 L540 1050 L540 1080" class="arrow"/>
+  <path d="M700 1050 L860 1050 L860 1080" class="arrow"/>
+  <path d="M700 1050 L1180 1050 L1180 1080" class="arrow"/>
+  <path d="M220 1152 L220 1190 L700 1190 L700 1230" class="arrow"/>
+  <path d="M540 1152 L540 1190 L700 1190 L700 1230" class="arrow"/>
+  <path d="M860 1152 L860 1190 L700 1190 L700 1230" class="arrow"/>
+  <path d="M1180 1152 L1180 1190 L700 1190 L700 1230" class="arrow"/>
+  <path d="M700 1294 L700 1330" class="arrow"/>
+  <path d="M700 1394 L700 1430" class="arrow"/>
+  <path d="M700 1494 L700 1530" class="arrow"/>
+</svg>

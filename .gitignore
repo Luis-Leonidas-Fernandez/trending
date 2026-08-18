@@ -1,0 +1,11 @@
+.venv/
+.env
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+python_backend/database/*.sqlite
+python_backend/database/*.sqlite-shm
+python_backend/database/*.sqlite-wal
+output/
+.DS_Store
+.venv_py39_backup_*/
