@@ -2,6 +2,11 @@
 
 Fase 7 no consulta Instagram real. Consolida la publicación simulada, el post,
 el log local y el topic usado para producir una evidencia auditable de calidad.
+
+Referencias arquitectónicas:
+    - ADR-0013: Auditoría local y chequeos de calidad sin conexión externa a Instagram.
+    - ADR-0005: Formato versionado y canónico para entregables JSON inter-fases.
+    - ADR-0012: Flujo en dos etapas para publicación en Instagram.
 """
 
 from __future__ import annotations
@@ -34,7 +39,11 @@ def process_instagram_output(
     input_path: str | Path,
     output_dir: str | Path | None = None,
 ) -> Path:
-    """Consume un output de Fase 6B y guarda métricas locales de Fase 7."""
+    """Consume un output de Fase 6B y guarda métricas locales de Fase 7.
+
+    Ejecuta los 8 chequeos locales de integridad sobre el post y topic asociados,
+    asigna un score de 0 a 100 y emite el entregable JSON versionado.
+    """
 
     source_path = Path(input_path)
     run_id = uuid.uuid4()
@@ -62,6 +71,7 @@ def process_instagram_output(
 
 
 def _load_instagram_output(input_path: Path) -> ParticipantOutput:
+    """Carga y valida el entregable de Fase 6B asegurando pertenencia de stage."""
     try:
         payload = json.loads(input_path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
@@ -82,6 +92,7 @@ def _load_instagram_output(input_path: Path) -> ParticipantOutput:
 
 
 def _build_metrics(source_output: ParticipantOutput) -> dict[str, Any]:
+    """Evalúa los 8 chequeos de consistencia local y calcula el puntaje de calidad."""
     post_payload = source_output.data.get("post")
     if not isinstance(post_payload, dict):
         raise MetricsServiceError("data.post debe ser un objeto")
@@ -136,6 +147,7 @@ def _build_metrics(source_output: ParticipantOutput) -> dict[str, Any]:
 
 
 def _warnings_from_checks(checks: dict[str, bool]) -> list[str]:
+    """Genera advertencias legibles para los chequeos que no pasaron satisfactoriamente."""
     labels = {
         "post_published_simulated": "El post no está en estado published_simulated",
         "has_image": "El post no tiene image_url",
@@ -150,6 +162,7 @@ def _warnings_from_checks(checks: dict[str, bool]) -> list[str]:
 
 
 def _asset_exists(path: Any) -> bool:
+    """Verifica si la imagen referenciada es una URL remota o existe como archivo local."""
     clean_path = _clean_text(path)
     if not clean_path:
         return False
@@ -160,12 +173,14 @@ def _asset_exists(path: Any) -> bool:
 
 
 def _write_json(*, output_path: Path, payload: dict[str, Any]) -> None:
+    """Valida contra esquema y persiste el archivo JSON con indentación."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     ParticipantOutput.model_validate(payload)
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _build_error_payload(*, run_id: uuid.UUID, error: Exception, input_path: Path) -> dict[str, Any]:
+    """Genera un entregable con status error para trazabilidad en caso de falla."""
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": str(run_id),
@@ -179,10 +194,12 @@ def _build_error_payload(*, run_id: uuid.UUID, error: Exception, input_path: Pat
 
 
 def _sanitize_error(error: Exception) -> str:
+    """Sanitiza y acota el texto del error."""
     return re.sub(r"\s+", " ", str(error)).strip()[:240] or error.__class__.__name__
 
 
 def _clean_text(value: Any) -> str:
+    """Limpia espacios en blanco."""
     if value is None:
         return ""
     return str(value).strip()

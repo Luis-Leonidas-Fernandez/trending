@@ -3,6 +3,11 @@
 Cada fila representa una rama identificada por el ``run_id`` global del estado.
 La evidencia se obtiene exclusivamente de los outputs referenciados por esa
 rama; nunca se consulta un archivo o endpoint global ``latest``.
+
+Referencias arquitectónicas:
+    - ADR-0014: Estado unificado de pipeline y persistencia relacional de ejecuciones.
+    - ADR-0003: Persistencia relacional con SQLite y SQLAlchemy 2.0.
+    - ADR-0005: Formato versionado y canónico para entregables JSON inter-fases.
 """
 
 from __future__ import annotations
@@ -25,14 +30,30 @@ MAX_LIMIT = 100
 
 
 def sync_current_pipeline_state() -> dict[str, Any] | None:
-    """Persiste el estado activo si representa una corrida real."""
+    """Persiste el estado activo si representa una corrida real.
+
+    Returns:
+        Diccionario con el detalle de la corrida sincronizada en SQLite,
+        o None si el estado actual está inactivo sin operaciones registradas.
+    """
 
     state = pipeline_state_service.get_pipeline_state()
     return upsert_pipeline_run(state)
 
 
 def upsert_pipeline_run(state: dict[str, Any]) -> dict[str, Any] | None:
-    """Inserta o actualiza una corrida sin tocar filas históricas ajenas."""
+    """Inserta o actualiza una corrida sin tocar filas históricas ajenas.
+
+    Extrae la evidencia de los outputs referenciados por la corrida, actualiza
+    los campos agregados en `pipeline_runs` y serializa el detalle en columnas
+    JSON para trazabilidad sin alterar corridas anteriores.
+
+    Args:
+        state: Diccionario de estado del pipeline.
+
+    Returns:
+        Diccionario con la fila persistida en detalle completo, o None si no hay actividad.
+    """
 
     if not _has_activity(state):
         return None
@@ -91,7 +112,18 @@ def list_pipeline_runs(
     topic: str | None = None,
     limit: int = DEFAULT_LIMIT,
 ) -> dict[str, Any]:
-    """Lista corridas reales, recientes primero, con filtros server-side."""
+    """Lista corridas reales, recientes primero, con filtros server-side.
+
+    Args:
+        date_from: Fecha o timestamp inferior ISO (inclusive).
+        date_to: Fecha o timestamp superior ISO (exclusive en fechas YYYY-MM-DD).
+        topic_id: Filtro exacto por ID de tema.
+        topic: Filtro parcial case-insensitive por título de tema.
+        limit: Cantidad máxima de registros (acotada entre 1 y MAX_LIMIT).
+
+    Returns:
+        Diccionario con clave `items` (resumen de corridas) y `meta` (conteo y límites).
+    """
 
     lower_bound = _parse_date_bound(date_from, upper=False)
     upper_bound = _parse_date_bound(date_to, upper=True)
@@ -128,6 +160,14 @@ def list_pipeline_runs(
 
 
 def get_pipeline_run(run_id: str) -> dict[str, Any] | None:
+    """Obtiene el detalle completo de una corrida por su run_id.
+
+    Args:
+        run_id: Identificador UUID de la corrida.
+
+    Returns:
+        Diccionario detallado de la corrida con outputs y evidencia, o None.
+    """
     with get_session() as session:
         run = session.get(PipelineRun, run_id)
         return _run_to_dict(run, detail=True) if run is not None else None
@@ -141,7 +181,11 @@ def get_current_run_history(
     topic: str | None = None,
     limit: int = DEFAULT_LIMIT,
 ) -> dict[str, Any]:
-    """Compatibilidad de ``/pipeline/history`` sobre el historial persistente."""
+    """Compatibilidad de ``/pipeline/history`` sobre el historial persistente.
+
+    Sincroniza primero el estado JSON actual y luego consulta la base de datos
+    aplicando los filtros solicitados.
+    """
 
     sync_current_pipeline_state()
     return list_pipeline_runs(
@@ -154,6 +198,12 @@ def get_current_run_history(
 
 
 def build_run_snapshot(state: dict[str, Any]) -> dict[str, Any]:
+    """Reconstruye un snapshot consolidado leyendo los archivos referenciados en outputs.
+
+    Inspecciona cada output de fase alcanzado por la corrida para extraer metadatos
+    de tema, post generado, logs y puntuación de calidad sin consultar endpoints
+    globales `latest`.
+    """
     output_payloads = {
         key: _read_referenced_output(path)
         for key, path in state.get("outputs", {}).items()
@@ -216,6 +266,7 @@ def build_run_snapshot(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def _run_to_dict(run: PipelineRun, *, detail: bool) -> dict[str, Any]:
+    """Serializa una entidad PipelineRun a un diccionario de respuesta API."""
     evidence = _json_load(run.evidence_json, {})
     topic = evidence.get("topic") if isinstance(evidence.get("topic"), dict) else None
     post = evidence.get("post") if isinstance(evidence.get("post"), dict) else None
@@ -255,6 +306,7 @@ def _run_to_dict(run: PipelineRun, *, detail: bool) -> dict[str, Any]:
 
 
 def _read_referenced_output(path: Any) -> dict[str, Any]:
+    """Lee de forma segura un archivo JSON de output referenciado."""
     if not isinstance(path, str) or not path.strip():
         return {}
     concrete = Path(path)
@@ -268,11 +320,13 @@ def _read_referenced_output(path: Any) -> dict[str, Any]:
 
 
 def _data(payload: dict[str, Any] | None) -> dict[str, Any]:
+    """Extrae el objeto `data` de un payload entregable de forma segura."""
     data = payload.get("data") if isinstance(payload, dict) else None
     return data if isinstance(data, dict) else {}
 
 
 def _first_dict(*values: Any) -> dict[str, Any] | None:
+    """Devuelve el primer valor que sea un diccionario no vacío."""
     for value in values:
         if isinstance(value, dict) and value:
             return value
@@ -280,6 +334,7 @@ def _first_dict(*values: Any) -> dict[str, Any] | None:
 
 
 def _has_activity(state: dict[str, Any]) -> bool:
+    """Verifica si el estado contiene información significativa que justifique persistir."""
     if state.get("execution_mode"):
         return True
     if state.get("status") != "idle":
@@ -290,6 +345,7 @@ def _has_activity(state: dict[str, Any]) -> bool:
 
 
 def _parse_date_bound(value: str | None, *, upper: bool) -> str | None:
+    """Parsea límites de fecha en formato ISO para filtrado de base de datos."""
     clean = _clean_optional_text(value)
     if not clean:
         return None
@@ -310,10 +366,12 @@ def _parse_date_bound(value: str | None, *, upper: bool) -> str | None:
 
 
 def _json_dump(value: Any) -> str:
+    """Serializa un valor a string JSON compacto sin espacios innecesarios."""
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def _json_load(value: str | None, fallback: Any) -> Any:
+    """Deserializa de forma segura un string JSON devolviendo el fallback ante error."""
     try:
         parsed = json.loads(value or "")
     except (TypeError, json.JSONDecodeError):
@@ -322,13 +380,16 @@ def _json_load(value: str | None, fallback: Any) -> Any:
 
 
 def _positive_int(value: Any) -> int | None:
+    """Valida y extrae un entero positivo descartando booleanos."""
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
 
 
 def _clean_optional_text(value: Any) -> str | None:
+    """Limpia espacios en blanco múltiples y devuelve texto limpio o None."""
     clean = " ".join(str(value or "").split()).strip()
     return clean or None
 
 
 def _now() -> str:
+    """Devuelve la marca temporal UTC actual formateada en ISO 8601."""
     return datetime.now(timezone.utc).isoformat()

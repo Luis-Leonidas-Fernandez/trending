@@ -3,6 +3,10 @@
 Trending no debe pedirle al usuario que entre a Spartan para reparar credenciales.
 Esta capa consulta e inicia los flujos de auth de Spartan desde el backend propio,
 manteniendo a Spartan como infraestructura interna.
+
+Referencias arquitectónicas:
+    - ADR-0010: Integración con Spartan Provider para generación de copy e imagen.
+    - ADR-0002: Arquitectura modular y desacoplamiento de capas.
 """
 
 from __future__ import annotations
@@ -26,11 +30,14 @@ class SpartanAuthServiceError(ValueError):
 
 @dataclass(frozen=True)
 class SpartanAuthConfig:
+    """Configuración del puente HTTP hacia los endpoints administrativos de Spartan."""
+
     base_url: str = DEFAULT_SPARTAN_BASE_URL
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
 
 
 def get_spartan_auth_config(environ: dict[str, str] | None = None) -> SpartanAuthConfig:
+    """Lee configuración de base URL y timeout para el servicio de autenticación."""
     env = os.environ if environ is None else environ
     return SpartanAuthConfig(
         base_url=_clean_text(env.get("SPARTAN_PROVIDER_BASE_URL")) or DEFAULT_SPARTAN_BASE_URL,
@@ -39,7 +46,7 @@ def get_spartan_auth_config(environ: dict[str, str] | None = None) -> SpartanAut
 
 
 def get_provider_status(provider: str, config: SpartanAuthConfig | None = None) -> dict[str, Any]:
-    """Devuelve el estado de auth de un provider soportado."""
+    """Devuelve el estado de auth de un provider soportado ('codex' o 'gemini')."""
 
     normalized_provider = _normalize_provider(provider)
     active_config = config or get_spartan_auth_config()
@@ -101,6 +108,7 @@ def start_provider_connection(provider: str, config: SpartanAuthConfig | None = 
 
 
 def _get_codex_legacy_status(config: SpartanAuthConfig) -> dict[str, Any]:
+    """Consulta el estado del proveedor legacy codex_subscription en Spartan."""
     provider_id = _find_provider_id(config, provider_type="codex_subscription")
     payload = _request_spartan(
         "GET",
@@ -111,6 +119,7 @@ def _get_codex_legacy_status(config: SpartanAuthConfig) -> dict[str, Any]:
 
 
 def _start_codex_legacy_oauth(config: SpartanAuthConfig) -> dict[str, Any]:
+    """Inicia el flujo OAuth legacy para suscripción Codex."""
     provider_id = _find_provider_id(config, provider_type="codex_subscription")
     return _request_spartan(
         "GET",
@@ -120,6 +129,7 @@ def _start_codex_legacy_oauth(config: SpartanAuthConfig) -> dict[str, Any]:
 
 
 def _find_provider_id(config: SpartanAuthConfig, *, provider_type: str) -> str:
+    """Busca el identificador único habilitado para un tipo de proveedor dado."""
     providers = _request_spartan_list(
         "GET",
         f"{_base_url(config)}/providers",
@@ -136,6 +146,7 @@ def _find_provider_id(config: SpartanAuthConfig, *, provider_type: str) -> str:
 
 
 def _request_spartan(method: str, url: str, *, timeout: float) -> dict[str, Any]:
+    """Ejecuta una petición HTTP a Spartan y valida que devuelva un diccionario JSON."""
     payload = _request_spartan_json(method, url, timeout=timeout)
     if not isinstance(payload, dict):
         raise SpartanAuthServiceError("Spartan devolvió un contrato inválido")
@@ -143,6 +154,7 @@ def _request_spartan(method: str, url: str, *, timeout: float) -> dict[str, Any]
 
 
 def _request_spartan_list(method: str, url: str, *, timeout: float) -> list[Any]:
+    """Ejecuta una petición HTTP a Spartan y valida que devuelva una lista JSON."""
     payload = _request_spartan_json(method, url, timeout=timeout)
     if not isinstance(payload, list):
         raise SpartanAuthServiceError("Spartan devolvió una lista inválida")
@@ -150,6 +162,7 @@ def _request_spartan_list(method: str, url: str, *, timeout: float) -> list[Any]
 
 
 def _request_spartan_json(method: str, url: str, *, timeout: float) -> Any:
+    """Envía la solicitud HTTP procesando excepciones de red y decodificación."""
     try:
         response = httpx.request(method, url, timeout=timeout)
         response.raise_for_status()
@@ -163,6 +176,7 @@ def _request_spartan_json(method: str, url: str, *, timeout: float) -> Any:
 
 
 def _present_provider_auth_status(provider: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Adapta el payload de respuesta de Spartan al contrato estándar de la UI de Trending."""
     return {
         "provider": provider,
         "connected": bool(payload.get("connected", False)),
@@ -174,6 +188,7 @@ def _present_provider_auth_status(provider: str, payload: dict[str, Any]) -> dic
 
 
 def _present_legacy_credential_status(provider: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Normaliza credenciales de proveedores legacy evaluando expiración de token."""
     credential = payload.get("credential") if isinstance(payload.get("credential"), dict) else payload
     if not isinstance(credential, dict):
         return _disconnected_legacy_status(provider, "not_connected")
@@ -198,6 +213,7 @@ def _present_legacy_credential_status(provider: str, payload: dict[str, Any]) ->
 
 
 def _disconnected_legacy_status(provider: str, reason: str) -> dict[str, Any]:
+    """Construye un objeto de estado desconectado con mensaje específico de razón."""
     message = "Codex token vencido; reautenticación requerida" if reason == "token_expired" else "Codex necesita reautenticación"
     return {
         "provider": provider,
@@ -210,6 +226,7 @@ def _disconnected_legacy_status(provider: str, reason: str) -> dict[str, Any]:
 
 
 def _is_past_iso_datetime(value: str) -> bool:
+    """Evalúa si una fecha ISO 8601 ya transcurrió en comparación con UTC actual."""
     if not value:
         return False
     try:
@@ -222,6 +239,7 @@ def _is_past_iso_datetime(value: str) -> bool:
 
 
 def _normalize_provider(provider: str) -> str:
+    """Valida que el proveedor pertenezca al conjunto de soportados."""
     normalized = _clean_text(provider).lower()
     if normalized not in SUPPORTED_PROVIDERS:
         raise SpartanAuthServiceError(f"Provider no soportado desde Trending: {provider}")
@@ -229,10 +247,12 @@ def _normalize_provider(provider: str) -> str:
 
 
 def _base_url(config: SpartanAuthConfig) -> str:
+    """Limpia la barra final de la URL base."""
     return config.base_url.rstrip("/")
 
 
 def _env_float(value: str | None, default: float) -> float:
+    """Parsea float desde variable de entorno con fallback."""
     if value is None:
         return default
     try:
@@ -243,12 +263,14 @@ def _env_float(value: str | None, default: float) -> float:
 
 
 def _clean_text(value: Any) -> str:
+    """Limpia espacios en blanco redundantes."""
     if value is None:
         return ""
     return re.sub(r"\s+", " ", str(value)).strip()
 
 
 def _sanitize_spartan_http_error(error: httpx.HTTPStatusError) -> str:
+    """Extrae el mensaje de error de la respuesta HTTP de Spartan."""
     response_text = ""
     try:
         payload = error.response.json()
@@ -262,4 +284,5 @@ def _sanitize_spartan_http_error(error: httpx.HTTPStatusError) -> str:
 
 
 def _sanitize_error(error: Any) -> str:
+    """Trunca el texto de un error a 240 caracteres."""
     return " ".join(str(error).split())[:240]

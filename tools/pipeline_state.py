@@ -1,3 +1,14 @@
+"""Herramienta CLI para inspeccionar y administrar el estado del pipeline.
+
+Permite consultar, reiniciar, eliminar o reconstruir el archivo
+`output/pipeline_state.json` interactuando directamente con
+`pipeline_state_service`.
+
+Relación con arquitectura y ADRs:
+    - ADR-0014: Máquina de estados del pipeline y persistencia dual
+      (JSON en disco como fuente de verdad para coordinación y polling).
+"""
+
 import argparse
 import json
 import sys
@@ -22,10 +33,17 @@ CURRENT_SELECTOR_OUTPUT = PROJECT_ROOT / "output" / "participante-4" / "topic_se
 
 
 def print_json(payload: dict) -> None:
+    """Imprime un diccionario en formato JSON formateado por salida estándar."""
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
 def load_errors_from_current_selector() -> list[str]:
+    """Carga los errores registrados en el archivo de salida del selector de temas.
+
+    Returns:
+        Lista de mensajes de error encontrados o lista vacía si el archivo
+        no existe o contiene JSON no válido.
+    """
     if not CURRENT_SELECTOR_OUTPUT.exists():
         return []
     try:
@@ -37,6 +55,13 @@ def load_errors_from_current_selector() -> list[str]:
 
 
 def main() -> int:
+    """Punto de entrada de la CLI de administración del estado del pipeline.
+
+    Procesa los subcomandos 'show', 'reset', 'delete' y 'bootstrap-current'.
+
+    Returns:
+        Código de salida (0 para éxito, 1 para error o excepción capturada).
+    """
     parser = argparse.ArgumentParser(description="Gestiona output/pipeline_state.json")
     subparsers = parser.add_subparsers(dest="command", required=True)
 

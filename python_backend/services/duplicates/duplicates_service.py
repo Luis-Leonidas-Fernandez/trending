@@ -3,6 +3,12 @@
 La Fase 3 consume un output versionado de la Fase 2, descarta temas inválidos
 o repetidos por título normalizado exacto, persiste únicamente los temas nuevos
 en SQLite y escribe un JSON auditable para la Fase 4.
+
+Referencias arquitectónicas:
+    - ADR-0008: Deduplicación por normalized_title exacto y persistencia relacional.
+    - ADR-0003: Persistencia relacional con SQLite y SQLAlchemy 2.0.
+    - ADR-0005: Formato versionado y canónico para entregables JSON inter-fases.
+    - ADR-0007: Normalización de cadenas y fallback determinístico de tendencias.
 """
 
 from __future__ import annotations
@@ -56,7 +62,11 @@ def process_trends_output(
     input_path: str | Path,
     output_dir: str | Path | None = None,
 ) -> Path:
-    """Procesa un output de Fase 2, persiste temas nuevos y guarda Fase 3."""
+    """Procesa un output de Fase 2, persiste temas nuevos y guarda Fase 3.
+
+    Descarta duplicados intra-lote y contra SQLite, guarda los nuevos en base
+    de datos y emite el entregable con contadores auditables de descartes.
+    """
 
     source_path = Path(input_path)
     run_id = uuid.uuid4()
@@ -99,6 +109,7 @@ def process_trends_output(
 
 
 def _load_phase_2_output(input_path: Path) -> ParticipantOutput:
+    """Carga y valida el archivo entregable de Fase 2."""
     try:
         payload = json.loads(input_path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
@@ -126,6 +137,7 @@ def _filter_topics(
     topics: list[dict[str, Any]],
     existing_topics: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
+    """Clasifica los temas recibidos en nuevos, reutilizables y descartados."""
     if not isinstance(topics, list):
         raise DuplicatesServiceError("topics debe ser una lista")
 
@@ -183,6 +195,7 @@ def _filter_topics(
 
 
 def _existing_topics_by_normalized_title(existing_topics: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Construye un diccionario indexado por título normalizado para búsqueda eficiente."""
     existing_by_normalized: dict[str, dict[str, Any]] = {}
     for topic in existing_topics:
         if not isinstance(topic, dict):
@@ -196,6 +209,7 @@ def _existing_topics_by_normalized_title(existing_topics: list[dict[str, Any]]) 
 
 
 def _normalize_topic(topic: dict[str, Any]) -> str:
+    """Normaliza el título de un tema aplicando NFKD y minúsculas."""
     raw_normalized = _clean_title(topic.get("normalized_title"))
     if raw_normalized:
         return normalize_title(raw_normalized)
@@ -208,6 +222,7 @@ def _topic_from_existing(
     title: str,
     normalized: str,
 ) -> dict[str, Any]:
+    """Construye una estructura reutilizable para un tema existente no usado."""
     return {
         "id": existing_topic.get("id"),
         "title": existing_topic.get("title") or title,
@@ -220,6 +235,7 @@ def _topic_from_existing(
 
 
 def _topic_for_persistence(topic: dict[str, Any], title: str, normalized: str) -> dict[str, Any]:
+    """Prepara el diccionario con los campos requeridos por la tabla topics."""
     return {
         "title": title,
         "normalized_title": normalized,
@@ -232,6 +248,7 @@ def _topic_for_persistence(topic: dict[str, Any], title: str, normalized: str) -
 
 
 def _persist_topics(topics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Persiste cada nuevo tema individualmente a través del repositorio."""
     saved_items: list[dict[str, Any]] = []
     for topic in topics:
         saved = topic_repository.create_topic(
@@ -275,6 +292,7 @@ def _build_payload(
     saved_count: int | None = None,
     reused_count: int = 0,
 ) -> dict[str, Any]:
+    """Genera el payload validable para el entregable de Fase 3."""
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": str(run_id),
@@ -306,6 +324,7 @@ def _build_payload(
 
 
 def _build_error_payload(run_id: uuid.UUID, error: Exception, input_path: Path) -> dict[str, Any]:
+    """Genera el payload con status error para auditoría."""
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": str(run_id),
@@ -331,6 +350,7 @@ def _build_error_payload(run_id: uuid.UUID, error: Exception, input_path: Path) 
 
 
 def _discarded_item(index: int, title: str, normalized_title: str, reason: str) -> dict[str, Any]:
+    """Crea un objeto descriptivo para un tema descartado."""
     return {
         "index": index,
         "title": title,
@@ -340,6 +360,7 @@ def _discarded_item(index: int, title: str, normalized_title: str, reason: str) 
 
 
 def _write_json(output_path: Path, payload: dict[str, Any]) -> None:
+    """Escribe el entregable en disco en formato JSON formateado."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
@@ -348,17 +369,20 @@ def _write_json(output_path: Path, payload: dict[str, Any]) -> None:
 
 
 def _clean_title(value: Any) -> str:
+    """Limpia espacios en blanco en títulos."""
     if value is None:
         return ""
     return re.sub(r"\s+", " ", str(value)).strip()
 
 
 def _clean_optional_text(value: Any) -> str | None:
+    """Limpia texto y retorna None si queda vacío."""
     cleaned = _clean_title(value)
     return cleaned or None
 
 
 def _safe_score(value: Any) -> float:
+    """Convierte un valor de score a float positivo de forma segura."""
     try:
         score = float(value)
     except (TypeError, ValueError):
@@ -367,12 +391,14 @@ def _safe_score(value: Any) -> float:
 
 
 def _sanitize_error(error: Exception) -> str:
+    """Sanitiza y trunca mensajes de error a 240 caracteres."""
     message = str(error).strip() or error.__class__.__name__
     message = re.sub(r"\s+", " ", message)
     return message[:240]
 
 
 def _sanitize_errors(errors: list[str]) -> list[str]:
+    """Sanitiza una lista de mensajes de error."""
     sanitized: list[str] = []
     for error in errors:
         message = re.sub(r"\s+", " ", str(error)).strip()[:240]
@@ -382,9 +408,11 @@ def _sanitize_errors(errors: list[str]) -> list[str]:
 
 
 def _is_unused(value: Any) -> bool:
+    """Determina si el valor del flag used indica no utilizado."""
     return value in {0, "0", False, None}
 
 
 def _has_positive_id(topic: dict[str, Any]) -> bool:
+    """Comprueba si el tema tiene un ID numérico entero positivo."""
     topic_id = topic.get("id")
     return isinstance(topic_id, int) and not isinstance(topic_id, bool) and topic_id > 0

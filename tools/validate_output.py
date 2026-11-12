@@ -1,3 +1,14 @@
+"""Herramienta CLI y librería de validación para entregables JSON del pipeline.
+
+Verifica la conformidad de los archivos JSON producidos por cada participante
+con el esquema ParticipantOutput, validando la nomenclatura del archivo
+({stage}_v1_{uuid-corto}.json) y la existencia de los assets declarados.
+
+Referencias arquitectónicas:
+    - ADR-0005: Formato versionado y canónico para entregables JSON inter-fases.
+    - ADR-0011: Almacenamiento local de assets y esquema canónico de entregables.
+"""
+
 import argparse
 import json
 import re
@@ -20,10 +31,12 @@ ALLOWED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
 class OutputValidationError(ValueError):
+    """Excepción controlada ante cualquier discrepancia de validación en el archivo entregable."""
     pass
 
 
 def load_json_file(file_path: Path) -> Dict[str, Any]:
+    """Carga y decodifica un archivo JSON desde el sistema de archivos."""
     try:
         with file_path.open("r", encoding="utf-8") as json_file:
             return json.load(json_file)
@@ -32,6 +45,7 @@ def load_json_file(file_path: Path) -> Dict[str, Any]:
 
 
 def validate_output_filename(file_path: Path, output: ParticipantOutput) -> None:
+    """Verifica que el nombre coincida con {stage}_v1_{run_id[:8]}.json."""
     if file_path.suffix != ".json":
         raise OutputValidationError("El archivo debe tener extensión .json")
 
@@ -56,6 +70,7 @@ def validate_output_filename(file_path: Path, output: ParticipantOutput) -> None
 
 
 def validate_output_assets(file_path: Path, output: ParticipantOutput) -> None:
+    """Comprueba que si se declara image_file, el asset PNG exista físicamente en disco."""
     image_file = output.data.get("image_file")
 
     if image_file is None:
@@ -90,6 +105,7 @@ def validate_output_assets(file_path: Path, output: ParticipantOutput) -> None:
 
 
 def validate_output_file(file_path: Path) -> ParticipantOutput:
+    """Ejecuta la validación integral del archivo entregable (JSON + filename + assets)."""
     payload = load_json_file(file_path)
 
     try:
@@ -103,6 +119,7 @@ def validate_output_file(file_path: Path) -> ParticipantOutput:
 
 
 def main() -> int:
+    """Punto de entrada de línea de comandos para la validación de archivos de output."""
     parser = argparse.ArgumentParser(description="Valida un JSON de output de participante.")
     parser.add_argument("json_file", help="Ruta del archivo JSON a validar")
     args = parser.parse_args()

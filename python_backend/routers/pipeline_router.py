@@ -1,3 +1,17 @@
+"""Router principal de orquestación y control del pipeline de Trending.
+
+Expone endpoints REST para inspeccionar el estado actual, consultar el
+historial persistente, ejecutar pasos individuales o secuenciales, cancelar
+corridas en vuelo y preparar temas para reutilización manual.
+
+Referencias arquitectónicas:
+    - ADR-0002: Modularización en FastAPI y desacoplamiento de routers.
+    - ADR-0014: Estado unificado de pipeline y persistencia relacional de ejecuciones.
+    - ADR-0015: Cancelación cooperativa del pipeline y cierre de sockets en vuelo.
+    - ADR-0009: Selección determinística sin mutación de base de datos.
+    - ADR-0012: Flujo en dos etapas para publicación en Instagram.
+"""
+
 from __future__ import annotations
 
 import json
@@ -35,11 +49,15 @@ IMPLEMENTED_STEPS = {"descubrir", "filtrar", "elegir", "crear", "publicar", "med
 
 
 class PipelineRunRequest(BaseModel):
+    """Payload para solicitar la ejecución de una secuencia de pasos en el pipeline."""
+
     steps: list[str] = Field(default_factory=list)
     run_steps: list[str] = Field(default_factory=list)
 
 
 class PipelineCancelRequest(BaseModel):
+    """Payload opcional para especificar el motivo de cancelación de una corrida."""
+
     reason: str = "Ejecución cancelada por el usuario"
 
 
@@ -49,6 +67,7 @@ class PipelineCancelledError(RuntimeError):
 
 @router.get("/state")
 def get_state():
+    """Devuelve el estado JSON activo del pipeline, enriquecido con su modo de ejecución."""
     state = pipeline_state.get_pipeline_state()
     return {"success": True, "data": _state_with_execution_mode(state)}
 
@@ -61,6 +80,7 @@ def get_history(
     topic: str | None = None,
     limit: int = Query(default=50, ge=1, le=100),
 ):
+    """Endpoint de compatibilidad para consultar el historial correlacionado de corridas."""
     try:
         return {
             "success": True,
@@ -84,6 +104,7 @@ def get_runs(
     topic: str | None = None,
     limit: int = Query(default=50, ge=1, le=100),
 ):
+    """Lista las corridas persistidas en SQLite con soporte de filtros server-side."""
     try:
         sync_current_pipeline_state()
         return {
@@ -102,6 +123,7 @@ def get_runs(
 
 @router.get("/runs/{run_id}")
 def get_run_detail(run_id: str):
+    """Devuelve el detalle completo de una corrida específica identificada por su UUID."""
     sync_current_pipeline_state()
     run = get_pipeline_run(run_id)
     if run is None:
@@ -114,12 +136,14 @@ def get_run_detail(run_id: str):
 
 @router.delete("/state")
 def reset_state():
+    """Reinicia el estado activo del pipeline a idle, eliminando la sesión previa."""
     state = pipeline_state.reset_pipeline_state()
     return {"success": True, "data": state}
 
 
 @router.post("/cancel")
 def cancel_pipeline(payload: PipelineCancelRequest):
+    """Cancela cooperativamente la corrida activa e interrumpe sockets HTTP en vuelo."""
     state = pipeline_state.mark_pipeline_cancelled(reason=payload.reason)
     closed_resources = cancel_active_run(state.get("run_id"))
     return {"success": True, "message": "Pipeline cancelado", "data": state, "closed_resources": closed_resources}
@@ -127,6 +151,7 @@ def cancel_pipeline(payload: PipelineCancelRequest):
 
 @router.post("/topics/{topic_id}/reuse")
 def reuse_topic(topic_id: int):
+    """Prepara un tema histórico para reutilización, configurando la fase 'crear' en idle."""
     state = pipeline_state.get_pipeline_state()
     if state.get("status") == "running":
         return JSONResponse(
@@ -169,26 +194,31 @@ def reuse_topic(topic_id: int):
 
 @router.post("/discover")
 def discover_trends():
+    """Ejecuta el paso 1 (descubrir) consultando tendencias en Google Trends."""
     return _execute_step("descubrir")
 
 
 @router.post("/filter")
 def filter_duplicates():
+    """Ejecuta el paso 2 (filtrar) descartando duplicados contra SQLite."""
     return _execute_step("filtrar")
 
 
 @router.post("/select")
 def select_topic():
+    """Ejecuta el paso 3 (elegir) seleccionando el primer tema disponible."""
     return _execute_step("elegir")
 
 
 @router.post("/create")
 def create_content():
+    """Ejecuta el paso 4 (crear) generando copy e imagen mediante IA o dry-run."""
     return _execute_step("crear")
 
 
 @router.post("/publish")
 def publish_content():
+    """Ejecuta el paso 5 (publicar) persistiendo el borrador para Fase 6A."""
     return _execute_step("publicar")
 
 
@@ -196,6 +226,7 @@ def publish_content():
 
 @router.get("/metrics/latest")
 def get_latest_metrics():
+    """Consulta las métricas y chequeos locales del post más reciente."""
     try:
         state = pipeline_state.get_pipeline_state()
         metrics_output = state.get("outputs", {}).get("frontend")
@@ -220,6 +251,7 @@ def get_latest_metrics():
 
 @router.post("/publish-simulated")
 def publish_simulated_from_pipeline():
+    """Finaliza una publicación simulada (Fase 6B), marcando el tema como usado."""
     try:
         state_before_publish = pipeline_state.get_pipeline_state()
         run_id = state_before_publish.get("run_id") if state_before_publish.get("status") == "running" else None
@@ -273,6 +305,7 @@ def publish_simulated_from_pipeline():
 
 @router.post("/run")
 def run_pipeline(payload: PipelineRunRequest):
+    """Ejecuta de manera secuencial los pasos solicitados verificando cancelación cooperativa."""
     try:
         selected_steps = _selected_steps_from_payload(payload)
         run_steps = list(
@@ -332,6 +365,7 @@ def run_pipeline(payload: PipelineRunRequest):
 
 
 def _execute_step(step: str):
+    """Encapsula la ejecución aislada de un paso individual con captura de errores."""
     try:
         normalized_step = pipeline_state._normalize_step(step)  # noqa: SLF001 - router acepta aliases públicos.
         reuse_conflict = _manual_reuse_conflict([normalized_step])
@@ -357,11 +391,13 @@ def _execute_step(step: str):
 
 
 def _selected_steps_from_payload(payload: PipelineRunRequest) -> list[str]:
+    """Extrae y normaliza los pasos enviados en el request o asume la lista completa."""
     raw_steps = payload.steps or list(pipeline_state.STEP_ORDER)
     return list(pipeline_state._normalize_steps(raw_steps))  # noqa: SLF001 - router acepta aliases públicos.
 
 
 def _manual_reuse_conflict(selected_steps: list[str]) -> JSONResponse | None:
+    """Verifica si se intentan correr pasos iniciales cuando hay un tema en reutilización manual."""
     state = pipeline_state.get_pipeline_state()
     blocked_steps = [step for step in selected_steps if step in {"descubrir", "filtrar", "elegir"}]
     if not blocked_steps or not _is_manual_reuse_mode(state):
@@ -385,6 +421,7 @@ def _manual_reuse_conflict(selected_steps: list[str]) -> JSONResponse | None:
 
 
 def _run_step(step: str, selected_steps: list[str] | None = None, run_id: str | None = None) -> dict[str, Any]:
+    """Invoca el servicio backend correspondiente a cada paso registrando inicio y fin."""
     normalized_step = pipeline_state._normalize_step(step)  # noqa: SLF001 - router acepta aliases públicos.
     if normalized_step not in IMPLEMENTED_STEPS:
         raise ValueError(f"El paso '{normalized_step}' todavía no tiene implementación backend")
@@ -448,11 +485,13 @@ def _run_step(step: str, selected_steps: list[str] | None = None, run_id: str | 
 
 
 def _raise_if_cancelled(*, run_id: str | None = None) -> None:
+    """Lanza PipelineCancelledError si el estado indica que la corrida fue cancelada."""
     if pipeline_state.is_pipeline_cancelled(run_id=run_id):
         raise PipelineCancelledError("Pipeline cancelado por el usuario")
 
 
 def _state_has_activity(state: dict[str, Any]) -> bool:
+    """Evalúa si el estado contiene actividad previa que requiera generar nuevo run_id."""
     if state.get("execution_mode"):
         return True
     if state.get("status") != "idle":
@@ -463,6 +502,7 @@ def _state_has_activity(state: dict[str, Any]) -> bool:
 
 
 def _is_reuse_already_prepared(state: dict[str, Any], topic_id: int) -> bool:
+    """Verifica si el estado actual ya contiene preparado el mismo topic_id para reutilizar."""
     if state.get("status") != "idle":
         return False
     if state.get("selected_steps") != ["crear"] or state.get("next_step") != "crear":
@@ -489,6 +529,7 @@ def _is_reuse_already_prepared(state: dict[str, Any], topic_id: int) -> bool:
 
 
 def _is_manual_reuse_mode(state: dict[str, Any]) -> bool:
+    """Detecta si el pipeline está condicionado por un modo de reutilización manual de tema."""
     if state.get("execution_mode") == pipeline_state.MANUAL_REUSE_MODE:
         return True
     if "elegir" not in state.get("completed_steps", []):
@@ -511,11 +552,13 @@ def _is_manual_reuse_mode(state: dict[str, Any]) -> bool:
 
 
 def _state_with_execution_mode(state: dict[str, Any]) -> dict[str, Any]:
+    """Inyecta la propiedad execution_mode si el estado opera bajo reutilización manual."""
     if not _is_manual_reuse_mode(state):
         return state
     return {**state, "execution_mode": pipeline_state.MANUAL_REUSE_MODE}
 
 def _required_output_path(output_key: str, participant: str, stage: str) -> Path:
+    """Resuelve la ruta del archivo de output previo requerido para ejecutar una fase."""
     state = pipeline_state.get_pipeline_state()
     state_output = state.get("outputs", {}).get(output_key)
     if state_output:
@@ -531,6 +574,7 @@ def _required_output_path(output_key: str, participant: str, stage: str) -> Path
 
 
 def _latest_output(participant: str, stage: str, preferred_status: str | None = None) -> Path | None:
+    """Busca el archivo de output versionado más reciente para un participante y etapa."""
     output_dir = PROJECT_ROOT / "output" / participant
     candidates = sorted(
         output_dir.glob(f"{stage}_v1_*.json"),
@@ -551,10 +595,12 @@ def _latest_output(participant: str, stage: str, preferred_status: str | None = 
 
 
 def _read_output(output_path: Path) -> dict[str, Any]:
+    """Lee y parsea un archivo JSON de output desde disco."""
     return json.loads(output_path.read_text(encoding="utf-8"))
 
 
 def _relative_path(path: str | Path) -> str:
+    """Devuelve la ruta relativa al directorio raíz del proyecto."""
     concrete = Path(path)
     try:
         return str(concrete.relative_to(PROJECT_ROOT))
@@ -563,6 +609,7 @@ def _relative_path(path: str | Path) -> str:
 
 
 def _error_response(error: Exception) -> JSONResponse:
+    """Genera una respuesta JSON estándar HTTP 400 ante errores controlados."""
     message = " ".join(str(error).split())[:240] or "Error desconocido"
     return JSONResponse(
         status_code=400,

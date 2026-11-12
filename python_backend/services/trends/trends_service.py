@@ -2,6 +2,11 @@
 
 La Fase 2 consulta el RSS de Google Trends para un mercado dado, normaliza los
 resultados y puede escribir un JSON versionado para que lo consuma la Fase 3.
+
+Referencias arquitectónicas:
+    - ADR-0007: Integración con Google Trends RSS, normalización de títulos y fallback determinístico.
+    - ADR-0005: Formato versionado y canónico para entregables JSON inter-fases.
+    - ADR-0008: Deduplicación por normalized_title exacto y persistencia relacional.
 """
 
 from __future__ import annotations
@@ -132,6 +137,7 @@ def save_trends_output(
 
 
 def _fetch_google_trends_rss(country: str) -> str:
+    """Realiza la petición HTTP GET al feed RSS de Google Trends."""
     response = httpx.get(
         GOOGLE_TRENDS_RSS_URL,
         params={"geo": country},
@@ -143,6 +149,7 @@ def _fetch_google_trends_rss(country: str) -> str:
 
 
 def _parse_google_trends_rss(rss_text: str, limit: int) -> list[dict[str, Any]]:
+    """Parsea el XML del RSS extrayendo títulos normalizados y scores de tráfico."""
     root = ET.fromstring(rss_text)
     items: list[dict[str, Any]] = []
     seen_titles: set[str] = set()
@@ -188,6 +195,7 @@ def normalize_title(title: str) -> str:
 
 
 def _extract_score(item: ET.Element, fallback_score: int) -> int:
+    """Extrae el approx_traffic si está presente o utiliza el score secuencial."""
     for child in item.iter():
         if _local_name(child.tag) == "approx_traffic":
             parsed_score = _parse_traffic_score(child.text or "")
@@ -197,6 +205,7 @@ def _extract_score(item: ET.Element, fallback_score: int) -> int:
 
 
 def _parse_traffic_score(raw_score: str) -> int | None:
+    """Parsea representaciones numéricas de tráfico (e.g. 50K+, 1M+)."""
     cleaned_score = raw_score.strip().lower().replace("+", "")
     if not cleaned_score:
         return None
@@ -220,6 +229,7 @@ def _parse_traffic_score(raw_score: str) -> int | None:
 
 
 def _extract_date(item: ET.Element) -> str:
+    """Extrae la fecha de publicación del item RSS en formato ISO YYYY-MM-DD."""
     pub_date = _find_child_text(item, "pubDate")
     if pub_date:
         try:
@@ -230,6 +240,7 @@ def _extract_date(item: ET.Element) -> str:
 
 
 def _find_child_text(item: ET.Element, expected_name: str) -> str:
+    """Busca el texto de un elemento hijo ignorando namespaces XML."""
     for child in item:
         if _local_name(child.tag) == expected_name:
             return child.text or ""
@@ -237,10 +248,12 @@ def _find_child_text(item: ET.Element, expected_name: str) -> str:
 
 
 def _local_name(tag: str) -> str:
+    """Separa el prefijo de namespace de una etiqueta XML."""
     return tag.rsplit("}", maxsplit=1)[-1]
 
 
 def _build_fallback_items(limit: int) -> list[dict[str, Any]]:
+    """Construye una lista determinística de temas offline para continuidad del pipeline."""
     today = datetime.now(timezone.utc).date().isoformat()
     return [
         {
@@ -256,16 +269,19 @@ def _build_fallback_items(limit: int) -> list[dict[str, Any]]:
 
 
 def _clean_text(value: str) -> str:
+    """Limpia espacios en blanco."""
     return re.sub(r"\s+", " ", value).strip()
 
 
 def _sanitize_error(error: Exception) -> str:
+    """Sanitiza y acota el texto del error."""
     message = str(error).strip() or error.__class__.__name__
     message = re.sub(r"\s+", " ", message)
     return message[:240]
 
 
 def _validate_country(country: str) -> str:
+    """Valida que el código de país sea un string ISO de 2 letras mayúsculas."""
     if not isinstance(country, str):
         raise ValueError("country debe ser un string con código ISO de 2 letras")
 
@@ -276,6 +292,7 @@ def _validate_country(country: str) -> str:
 
 
 def _validate_limit(limit: int) -> int:
+    """Valida que el límite solicitado sea un entero dentro del rango permitido (1-10)."""
     if not isinstance(limit, int):
         raise ValueError("limit debe ser un entero")
 

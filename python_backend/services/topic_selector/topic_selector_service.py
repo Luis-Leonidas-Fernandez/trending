@@ -3,6 +3,11 @@
 La Fase 4 consume el output versionado de la Fase 3, preserva el orden recibido
 por ``data.items`` y selecciona el primer tema estructuralmente válido y no usado.
 Es un selector puro: no consulta SQLite ni modifica el campo ``used``.
+
+Referencias arquitectónicas:
+    - ADR-0009: Selección determinística de tema sin mutación de base de datos.
+    - ADR-0005: Formato versionado y canónico para entregables JSON inter-fases.
+    - ADR-0012: Flujo en dos etapas para publicación en Instagram.
 """
 
 from __future__ import annotations
@@ -133,6 +138,7 @@ def create_reuse_topic_output(
 
 
 def _load_phase_3_output(input_path: Path) -> ParticipantOutput:
+    """Carga y valida el archivo entregable de Fase 3."""
     try:
         payload = json.loads(input_path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
@@ -160,6 +166,7 @@ def _load_phase_3_output(input_path: Path) -> ParticipantOutput:
 
 
 def _validate_reusable_topic(topic: Any) -> dict[str, Any]:
+    """Comprueba que el tema manual contenga ID entero positivo y títulos."""
     if not isinstance(topic, dict):
         raise TopicSelectorServiceError("El tema a reutilizar debe ser un objeto")
 
@@ -183,6 +190,7 @@ def _validate_reusable_topic(topic: Any) -> dict[str, Any]:
 
 
 def _select_from_topics(topics: list[dict[str, Any]]) -> dict[str, Any]:
+    """Evalúa secuencialmente la lista y selecciona el primer tema no usado."""
     if not isinstance(topics, list):
         raise TopicSelectorServiceError("topics debe ser una lista")
 
@@ -235,6 +243,7 @@ def _build_payload(
     eligible_count: int,
     used_fallback: bool,
 ) -> dict[str, Any]:
+    """Construye el entregable para el Participante 4."""
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": str(run_id),
@@ -264,6 +273,7 @@ def _build_payload(
 
 
 def _build_error_payload(run_id: uuid.UUID, error: Exception, input_path: Path) -> dict[str, Any]:
+    """Construye entregable de status error ante fallo."""
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": str(run_id),
@@ -287,6 +297,7 @@ def _build_error_payload(run_id: uuid.UUID, error: Exception, input_path: Path) 
 
 
 def _source_used_fallback(source_output: ParticipantOutput) -> bool:
+    """Verifica si el output de origen usó fallback."""
     source = source_output.data.get("source", {})
     if isinstance(source, dict):
         return bool(source.get("used_fallback", False))
@@ -294,6 +305,7 @@ def _source_used_fallback(source_output: ParticipantOutput) -> bool:
 
 
 def _discarded_item(index: int, title: str, normalized_title: str, reason: str) -> dict[str, Any]:
+    """Crea registro de descarte descriptivo."""
     return {
         "index": index,
         "title": title,
@@ -303,6 +315,7 @@ def _discarded_item(index: int, title: str, normalized_title: str, reason: str) 
 
 
 def _write_json(output_path: Path, payload: dict[str, Any]) -> None:
+    """Persiste entregable JSON en disco."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
@@ -311,26 +324,31 @@ def _write_json(output_path: Path, payload: dict[str, Any]) -> None:
 
 
 def _is_positive_int(value: Any) -> bool:
+    """Valida entero positivo descartando booleanos."""
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def _is_unused(value: Any) -> bool:
+    """Valida si el valor representa topic no usado (0 o False)."""
     return value is False or (isinstance(value, int) and not isinstance(value, bool) and value == 0)
 
 
 def _clean_text(value: Any) -> str:
+    """Elimina espacios en blanco redundantes."""
     if value is None:
         return ""
     return re.sub(r"\s+", " ", str(value)).strip()
 
 
 def _sanitize_error(error: Exception) -> str:
+    """Sanitiza mensaje de error."""
     message = str(error).strip() or error.__class__.__name__
     message = re.sub(r"\s+", " ", message)
     return message[:240]
 
 
 def _sanitize_errors(errors: list[str]) -> list[str]:
+    """Sanitiza lista de mensajes de error."""
     sanitized: list[str] = []
     for error in errors:
         message = re.sub(r"\s+", " ", str(error)).strip()[:240]

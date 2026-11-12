@@ -4,6 +4,12 @@ La Fase 5 consume el output de Fase 4, genera contenido textual para un post
 con IA y guarda un JSON versionado. La integración real usa Spartan Provider
 por HTTP, pero mantiene un fallback determinístico/dry-run para que el pipeline
 no quede bloqueado por credenciales o disponibilidad del provider.
+
+Referencias arquitectónicas:
+    - ADR-0010: Integración con Spartan Provider para generación de copy e imagen.
+    - ADR-0011: Almacenamiento local de assets y esquema canónico de entregables.
+    - ADR-0015: Cancelación cooperativa del pipeline y cierre de sockets en vuelo.
+    - ADR-0005: Formato versionado y canónico para entregables JSON inter-fases.
 """
 
 from __future__ import annotations
@@ -46,7 +52,7 @@ class AIServiceError(ValueError):
 
 @dataclass(frozen=True)
 class AIConfig:
-    """Configuración mínima para elegir cliente IA."""
+    """Configuración mínima inmutable para selección y ejecución de clientes IA."""
 
     provider: str = DEFAULT_PROVIDER
     dry_run: bool = True
@@ -62,7 +68,7 @@ class AIConfig:
 
 
 class AIClient(Protocol):
-    """Contrato común para clientes de generación de contenido."""
+    """Contrato común para clientes de generación de contenido textual."""
 
     source: str
 
@@ -76,6 +82,7 @@ class DryRunAIClient:
     source = "dry_run"
 
     def generate(self, topic: dict[str, Any]) -> dict[str, Any]:
+        """Genera copy estático y hashtags basados en el título del tema sin llamadas externas."""
         title = _clean_text(topic.get("title")) or "tema tendencia"
         normalized_title = _clean_text(topic.get("normalized_title")) or _slugify(title)
         hashtag_seed = re.sub(r"[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ ]+", " ", title)
@@ -121,6 +128,7 @@ class SpartanAIClient:
         self.timeout_seconds = timeout_seconds
 
     def generate(self, topic: dict[str, Any]) -> dict[str, Any]:
+        """Invoca el endpoint chat/completions con socket cancelable registrado."""
         if not self.app_client_api_key:
             raise AIServiceError("Spartan Gateway requiere SPARTAN_APP_CLIENT_API_KEY")
 
@@ -162,7 +170,7 @@ class SpartanAIClient:
                                     "task": "Generar contenido breve para un post de tendencia",
                                     "topic": topic,
                                     "language": "es-AR",
-                                },
+                                    },
                                 ensure_ascii=False,
                             ),
                         },
@@ -196,6 +204,7 @@ class SpartanImageClient:
         self.size = size
 
     def generate(self, prompt: str) -> dict[str, Any]:
+        """Solicita la generación de imagen en base64 mediante images/generations."""
         if not self.app_client_api_key:
             raise AIServiceError("Spartan Gateway requiere SPARTAN_APP_CLIENT_API_KEY")
         clean_prompt = _clean_text(prompt)
@@ -257,7 +266,7 @@ def get_ai_config(environ: dict[str, str] | None = None) -> AIConfig:
 
 
 def get_ai_client(config: AIConfig | None = None) -> AIClient:
-    """Construye el cliente IA activo."""
+    """Construye el cliente IA activo según la configuración provista."""
 
     active_config = config or get_ai_config()
     if active_config.dry_run:
@@ -289,7 +298,11 @@ def process_topic_selector_output(
     image_client: SpartanImageClient | None = None,
     config: AIConfig | None = None,
 ) -> Path:
-    """Procesa un output de Fase 4 y guarda el entregable de Fase 5."""
+    """Procesa un output de Fase 4 y guarda el entregable de Fase 5.
+
+    Lee el tema elegido en Fase 4, ejecuta la generación de texto e imagen opcional,
+    almacena los assets PNG generados y persiste el archivo JSON versionado.
+    """
 
     source_path = Path(input_path)
     run_id = uuid.uuid4()
@@ -372,6 +385,7 @@ def process_topic_selector_output(
 
 
 def _get_image_client(config: AIConfig) -> SpartanImageClient:
+    """Instancia el cliente de imagen si la configuración es válida para Spartan."""
     if config.provider.lower() != "spartan" or config.dry_run:
         raise AIServiceError("Generación de imagen real requiere AI_PROVIDER=spartan y AI_DRY_RUN=false")
     image_model = config.spartan_image_model or config.spartan_model
@@ -385,6 +399,7 @@ def _get_image_client(config: AIConfig) -> SpartanImageClient:
 
 
 def _write_image_asset(*, b64_json: str, run_id: uuid.UUID, destination_dir: Path) -> Path:
+    """Decodifica el string base64 y guarda el archivo PNG en el directorio de assets."""
     try:
         image_bytes = base64.b64decode(b64_json, validate=True)
     except (binascii.Error, ValueError) as error:
@@ -403,6 +418,7 @@ def _write_image_asset(*, b64_json: str, run_id: uuid.UUID, destination_dir: Pat
 
 
 def _relative_project_path(path: Path) -> str:
+    """Devuelve la ruta relativa al directorio raíz del proyecto."""
     try:
         return str(path.resolve().relative_to(PROJECT_ROOT))
     except ValueError:
@@ -410,6 +426,7 @@ def _relative_project_path(path: Path) -> str:
 
 
 def _load_phase_4_output(input_path: Path) -> ParticipantOutput:
+    """Carga y valida el archivo entregable JSON generado por la Fase 4."""
     try:
         payload = json.loads(input_path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
@@ -435,6 +452,7 @@ def _load_phase_4_output(input_path: Path) -> ParticipantOutput:
 
 
 def _validate_topic(topic: Any) -> dict[str, Any]:
+    """Comprueba que el diccionario del tema contenga id entero positivo y títulos no vacíos."""
     if not isinstance(topic, dict):
         raise AIServiceError("selected_topic debe ser un objeto")
 
@@ -451,6 +469,7 @@ def _validate_topic(topic: Any) -> dict[str, Any]:
 
 
 def _normalize_content(content: dict[str, Any], topic: dict[str, Any]) -> dict[str, Any]:
+    """Valida y normaliza la estructura generada (headline, caption, description, etc.)."""
     if not isinstance(content, dict):
         raise AIServiceError("La respuesta IA debe ser un objeto")
 
@@ -477,6 +496,7 @@ def _normalize_content(content: dict[str, Any], topic: dict[str, Any]) -> dict[s
 
 
 def _normalize_caption_text(value: Any) -> str:
+    """Asegura que el caption contenga división en 2 o 3 párrafos limpios."""
     raw_text = _clean_multiline_text(value)
     if not raw_text:
         return ""
@@ -496,6 +516,7 @@ def _normalize_caption_text(value: Any) -> str:
 
 
 def _clean_multiline_text(value: Any) -> str:
+    """Normaliza saltos de línea manteniendo bloques de párrafos."""
     if value is None:
         return ""
     text = str(value).replace("\r\n", "\n").replace("\r", "\n")
@@ -509,6 +530,7 @@ def _clean_multiline_text(value: Any) -> str:
 
 
 def _is_hashtag_only_line(value: str) -> bool:
+    """Detecta si una línea está compuesta exclusivamente de etiquetas #."""
     text = value.replace("**", "").strip()
     if not text or "#" not in text:
         return False
@@ -516,6 +538,7 @@ def _is_hashtag_only_line(value: str) -> bool:
 
 
 def _split_sentences_in_three_groups(sentences: list[str]) -> list[list[str]]:
+    """Distribuye una lista de oraciones en 3 bloques balanceados."""
     group_count = 3
     base_size, remainder = divmod(len(sentences), group_count)
     groups: list[list[str]] = []
@@ -528,6 +551,7 @@ def _split_sentences_in_three_groups(sentences: list[str]) -> list[list[str]]:
 
 
 def _normalize_hashtags(value: Any) -> list[str]:
+    """Garantiza formato #etiqueta y limita a 10 hashtags."""
     raw_items = value if isinstance(value, list) else []
     hashtags: list[str] = []
     for item in raw_items:
@@ -543,6 +567,7 @@ def _normalize_hashtags(value: Any) -> list[str]:
 
 
 def _extract_chat_content(payload: dict[str, Any]) -> str:
+    """Extrae el contenido textual del primer choice retornado por chat/completions."""
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices:
         raise AIServiceError("Spartan Provider no devolvió choices")
@@ -559,6 +584,7 @@ def _extract_chat_content(payload: dict[str, Any]) -> str:
 
 
 def _parse_generated_content(content: str) -> dict[str, Any]:
+    """Parsea la respuesta JSON retornada por el modelo de lenguaje."""
     try:
         parsed = json.loads(content)
     except json.JSONDecodeError as error:
@@ -585,6 +611,7 @@ def _build_payload(
     image_error: str | None = None,
     used_image_fallback: bool = False,
 ) -> dict[str, Any]:
+    """Construye el entregable conforme al esquema ParticipantOutput para Fase 5."""
     image_metadata = {
         "image_enabled": True,
         "image_used_fallback": used_image_fallback,
@@ -629,6 +656,7 @@ def _build_payload(
 
 
 def _build_error_payload(run_id: uuid.UUID, error: Exception, input_path: Path) -> dict[str, Any]:
+    """Construye un entregable con status error para auditoría ante fallas no recuperables."""
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": str(run_id),
@@ -647,6 +675,7 @@ def _build_error_payload(run_id: uuid.UUID, error: Exception, input_path: Path) 
 
 
 def _source_used_fallback(source_output: ParticipantOutput) -> bool:
+    """Verifica si el output antecesor declaró haber utilizado fallback."""
     source = source_output.data.get("source", {})
     if isinstance(source, dict):
         return bool(source.get("used_fallback", False))
@@ -654,17 +683,20 @@ def _source_used_fallback(source_output: ParticipantOutput) -> bool:
 
 
 def _write_json(output_path: Path, payload: dict[str, Any]) -> None:
+    """Persiste el payload en formato JSON con indentación en la ruta destino."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _env_bool(value: str | None, *, default: bool) -> bool:
+    """Parsea variables de entorno booleanas con variantes comunes (1, true, yes, si)."""
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "y", "on", "si", "sí"}
 
 
 def _env_float(value: str | None, default: float) -> float:
+    """Parsea variables de entorno numéricas flotantes con valor por defecto."""
     if value is None:
         return default
     try:
@@ -675,21 +707,25 @@ def _env_float(value: str | None, default: float) -> float:
 
 
 def _clean_text(value: Any) -> str:
+    """Elimina espacios redundantes y retorna string limpio."""
     if value is None:
         return ""
     return re.sub(r"\s+", " ", str(value)).strip()
 
 
 def _slugify(value: str) -> str:
+    """Genera una versión alfanumérica simple de un texto."""
     return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
 
 
 def _sanitize_errors(errors: Any) -> list[str]:
+    """Limpia y trunca una lista de errores."""
     if not isinstance(errors, list):
         return []
     return [_sanitize_error(error) for error in errors if _sanitize_error(error)]
 
 
 def _sanitize_error(error: Any) -> str:
+    """Trunca mensajes de error a 240 caracteres."""
     message = " ".join(str(error).split())
     return message[:240]

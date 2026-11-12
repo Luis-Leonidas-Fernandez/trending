@@ -3,6 +3,11 @@
 Esta capa NO reemplaza los outputs versionados por participante. Los referencia
 para saber hasta dónde llegó una ejecución y sincroniza cada cambio del estado
 real con el historial persistente en SQLite.
+
+Referencias arquitectónicas:
+    - ADR-0014: Estado unificado de pipeline y persistencia relacional de ejecuciones.
+    - ADR-0005: Formato versionado y canónico para entregables JSON inter-fases.
+    - ADR-0015: Cancelación cooperativa del pipeline y cierre de sockets en vuelo.
 """
 
 from __future__ import annotations
@@ -59,7 +64,15 @@ def create_pipeline_state(
     selected_steps: list[str] | None = None,
     state_path: str | Path = DEFAULT_STATE_PATH,
 ) -> dict[str, Any]:
-    """Crea un estado nuevo en idle y lo persiste."""
+    """Crea un estado nuevo en idle y lo persiste en disco y base de datos.
+
+    Args:
+        selected_steps: Pasos seleccionados para la corrida o None para vacíos.
+        state_path: Ruta del archivo JSON de estado.
+
+    Returns:
+        Diccionario con el payload validado del nuevo estado creado.
+    """
 
     selected = _normalize_steps(selected_steps or [])
     now = _now()
@@ -85,7 +98,18 @@ def get_pipeline_state(
     state_path: str | Path = DEFAULT_STATE_PATH,
     create_if_missing: bool = True,
 ) -> dict[str, Any]:
-    """Lee el estado actual o crea uno vacío si no existe."""
+    """Lee el estado actual o crea uno vacío si no existe.
+
+    Args:
+        state_path: Ubicación del archivo `pipeline_state.json`.
+        create_if_missing: Si es True y el archivo no existe, crea un estado idle inicial.
+
+    Returns:
+        Estructura de datos del estado actual validada contra `_validate_state`.
+
+    Raises:
+        PipelineStateError: Si el archivo no existe y `create_if_missing=False`, o el JSON está corrupto.
+    """
 
     path = Path(state_path)
     if not path.exists():
@@ -106,7 +130,18 @@ def start_pipeline_run(
     selected_steps: list[str] | None = None,
     state_path: str | Path = DEFAULT_STATE_PATH,
 ) -> dict[str, Any]:
-    """Inicia una ejecución nueva conservando el archivo de estado."""
+    """Inicia una ejecución nueva conservando el archivo de estado.
+
+    Genera un nuevo `run_id` y transiciona el estado a `running`, estableciendo
+    el primer paso seleccionado como `current_step`.
+
+    Args:
+        selected_steps: Lista de pasos a ejecutar, por defecto todos los pasos canónicos.
+        state_path: Ruta destino del archivo de estado.
+
+    Returns:
+        Diccionario con el estado inicial de la corrida en progreso.
+    """
 
     selected = _normalize_steps(selected_steps or list(STEP_ORDER))
     now = _now()
@@ -139,6 +174,14 @@ def mark_step_started(
     puede seguir marcando como completados ni referenciando outputs de ese paso
     ni de pasos posteriores. Los archivos versionados no se borran: sólo dejan
     de ser la rama activa del pipeline.
+
+    Args:
+        step: Nombre o alias del paso que comienza ejecución.
+        selected_steps: Pasos seleccionados para actualizar el plan, opcional.
+        state_path: Ubicación del archivo de estado.
+
+    Returns:
+        Diccionario con el estado actualizado en `running`.
     """
 
     normalized_step = _normalize_step(step)
@@ -168,7 +211,24 @@ def mark_step_completed(
     errors: list[str] | None = None,
     state_path: str | Path = DEFAULT_STATE_PATH,
 ) -> dict[str, Any]:
-    """Registra un paso terminado y calcula el próximo paso pendiente."""
+    """Registra un paso terminado y calcula el próximo paso pendiente.
+
+    Actualiza el registro de outputs asociando el path relativo generado, limpia
+    `current_step` y avanza a `next_step` según los pasos planificados.
+
+    Args:
+        step: Paso completado.
+        output_path: Ruta al archivo JSON entregable generado por la fase.
+        status: Estado de finalización ('success' o 'draft').
+        errors: Errores no bloqueantes o advertencias acumuladas.
+        state_path: Ruta del archivo de estado.
+
+    Returns:
+        Diccionario con el estado actualizado tras la finalización del paso.
+
+    Raises:
+        PipelineStateError: Si el status no es 'success' o 'draft'.
+    """
 
     normalized_step = _normalize_step(step)
     if status not in {"success", "draft"}:
@@ -205,7 +265,16 @@ def mark_step_failed(
     error: str,
     state_path: str | Path = DEFAULT_STATE_PATH,
 ) -> dict[str, Any]:
-    """Registra un fallo de paso y deja el estado en error."""
+    """Registra un fallo de paso y deja el estado en error.
+
+    Args:
+        step: Paso en el que ocurrió la falla.
+        error: Mensaje descriptivo del error ocurrido.
+        state_path: Ruta del archivo de estado.
+
+    Returns:
+        Diccionario con el estado transicionado a `error`.
+    """
 
     normalized_step = _normalize_step(step)
     state = get_pipeline_state(state_path=state_path)
@@ -218,13 +287,20 @@ def mark_step_failed(
     return state
 
 
-
 def mark_pipeline_cancelled(
     *,
     reason: str = "Ejecución cancelada por el usuario",
     state_path: str | Path = DEFAULT_STATE_PATH,
 ) -> dict[str, Any]:
-    """Marca la ejecución activa como cancelada sin borrar evidencia previa."""
+    """Marca la ejecución activa como cancelada sin borrar evidencia previa.
+
+    Args:
+        reason: Motivo de la cancelación cooperativa.
+        state_path: Ubicación del archivo de estado.
+
+    Returns:
+        Diccionario con el estado transicionado a `cancelled`.
+    """
 
     state = get_pipeline_state(state_path=state_path)
     current_step = state.get("current_step")
@@ -243,7 +319,18 @@ def is_pipeline_cancelled(
     run_id: str | None = None,
     state_path: str | Path = DEFAULT_STATE_PATH,
 ) -> bool:
-    """Indica si la ejecución actual fue cancelada."""
+    """Indica si la ejecución actual fue cancelada.
+
+    Permite a los routers y orquestadores consultar si la corrida activa
+    recibió una solicitud de cancelación cooperativa.
+
+    Args:
+        run_id: Identificador esperado de la corrida a verificar.
+        state_path: Ubicación del archivo de estado.
+
+    Returns:
+        True si coincide el run_id y el estado es 'cancelled', False en caso contrario.
+    """
 
     if run_id is None:
         return False
@@ -257,7 +344,15 @@ def reset_pipeline_state(
     state_path: str | Path = DEFAULT_STATE_PATH,
     create_new: bool = True,
 ) -> dict[str, Any] | None:
-    """Elimina el estado actual y opcionalmente crea uno nuevo vacío."""
+    """Elimina el estado actual y opcionalmente crea uno nuevo vacío.
+
+    Args:
+        state_path: Ubicación del archivo de estado.
+        create_new: Si es True, inicializa y devuelve un nuevo estado en `idle`.
+
+    Returns:
+        Diccionario con el nuevo estado si `create_new=True`, o None.
+    """
 
     path = Path(state_path)
     if path.exists():
@@ -270,7 +365,14 @@ def reset_pipeline_state(
 
 
 def delete_pipeline_state(*, state_path: str | Path = DEFAULT_STATE_PATH) -> bool:
-    """Elimina el archivo de estado. Devuelve True si existía."""
+    """Elimina el archivo de estado. Devuelve True si existía.
+
+    Args:
+        state_path: Ubicación del archivo de estado.
+
+    Returns:
+        True si el archivo existía y fue desvinculado, False si no existía.
+    """
 
     path = Path(state_path)
     if not path.exists():
@@ -288,7 +390,22 @@ def bootstrap_state_from_outputs(
     errors: list[str] | None = None,
     state_path: str | Path = DEFAULT_STATE_PATH,
 ) -> dict[str, Any]:
-    """Crea un estado inicial a partir de outputs ya generados."""
+    """Crea un estado inicial a partir de outputs ya generados.
+
+    Permite reconstruir el estado operativo del pipeline cuando existen
+    entregables previos en disco sin un `pipeline_state.json` activo.
+
+    Args:
+        trends_output: Ruta al output de Fase 2 (opcional).
+        duplicates_output: Ruta al output de Fase 3 (opcional).
+        topic_selector_output: Ruta al output de Fase 4 (opcional).
+        status: Estado asignado a la corrida reconstruida.
+        errors: Lista de errores o advertencias previas.
+        state_path: Ubicación de destino del estado reconstruido.
+
+    Returns:
+        Diccionario con el estado persistido.
+    """
 
     completed_steps: list[PipelineStep] = []
     outputs = _empty_outputs()
@@ -332,6 +449,13 @@ def prepare_topic_reuse(
     La preparación es deliberadamente ``idle``: no hay una ejecución activa.
     Fase 4 queda registrada como evidencia explícita y sólo ``crear`` queda
     seleccionado. El usuario debe iniciar esa fase desde el dashboard.
+
+    Args:
+        topic_selector_output: Ruta al archivo generado por `create_reuse_topic_output`.
+        state_path: Ubicación del archivo de estado.
+
+    Returns:
+        Diccionario con el estado configurado en modo `manual_history_reuse`.
     """
 
     now = _now()
@@ -357,7 +481,11 @@ def prepare_topic_reuse(
 
 
 def _invalidate_from_step(state: dict[str, Any], step: PipelineStep) -> None:
-    """Quita del estado activo el paso indicado y todos sus dependientes."""
+    """Quita del estado activo el paso indicado y todos sus dependientes.
+
+    Garantiza que no queden referencias a outputs de fases posteriores
+    cuando se re-ejecuta un paso intermedio anterior.
+    """
 
     step_index = STEP_ORDER.index(step)
     invalid_steps = set(STEP_ORDER[step_index:])
@@ -378,6 +506,7 @@ def _invalidate_from_step(state: dict[str, Any], step: PipelineStep) -> None:
 
 
 def _empty_outputs() -> dict[str, str | None]:
+    """Inicializa el mapa canónico de outputs en None para todas las etapas."""
     return {
         "trends": None,
         "duplicates": None,
@@ -389,6 +518,11 @@ def _empty_outputs() -> dict[str, str | None]:
 
 
 def _validate_state(payload: dict[str, Any]) -> dict[str, Any]:
+    """Valida la integridad estructural del diccionario de estado JSON.
+
+    Comprueba versión de esquema, validez de UUID, tipos de datos y normaliza
+    listas de pasos seleccionados y completados.
+    """
     if not isinstance(payload, dict):
         raise PipelineStateError("El estado debe ser un objeto JSON")
     if payload.get("state_version") != STATE_VERSION:
@@ -418,6 +552,7 @@ def _validate_state(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _write_state(state: dict[str, Any], path: Path) -> None:
+    """Escribe el estado JSON en disco y sincroniza con SQLite en la ruta por defecto."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     if path.resolve() == DEFAULT_STATE_PATH.resolve():
@@ -431,6 +566,7 @@ def _write_state(state: dict[str, Any], path: Path) -> None:
 
 
 def _normalize_step(step: str) -> PipelineStep:
+    """Normaliza alias en español e inglés hacia el nombre canónico del paso."""
     if not isinstance(step, str):
         raise PipelineStateError("El paso debe ser texto")
     normalized = step.strip().lower()
@@ -456,6 +592,7 @@ def _normalize_step(step: str) -> PipelineStep:
 
 
 def _normalize_steps(steps: list[str]) -> list[PipelineStep]:
+    """Convierte una lista de nombres o alias de pasos a una lista canónica ordenada."""
     if not isinstance(steps, list):
         raise PipelineStateError("selected_steps debe ser una lista")
     normalized: list[PipelineStep] = []
@@ -467,12 +604,14 @@ def _normalize_steps(steps: list[str]) -> list[PipelineStep]:
 
 
 def _sort_steps(steps: list[PipelineStep]) -> list[PipelineStep]:
+    """Ordena una secuencia de pasos respetando el orden canónico del pipeline."""
     return [step for step in STEP_ORDER if step in steps]
 
 
 def _next_pending_step(
     selected_steps: list[PipelineStep], completed_steps: list[PipelineStep]
 ) -> PipelineStep | None:
+    """Identifica el primer paso de los seleccionados que aún no fue completado."""
     for step in selected_steps:
         if step not in completed_steps:
             return step
@@ -480,6 +619,7 @@ def _next_pending_step(
 
 
 def _status_from_progress(state: dict[str, Any]) -> PipelineStatus:
+    """Calcula el estado global ('success' o 'running') en base a los pasos completados."""
     selected = state.get("selected_steps", [])
     completed = state.get("completed_steps", [])
     if selected and all(step in completed for step in selected):
@@ -488,6 +628,7 @@ def _status_from_progress(state: dict[str, Any]) -> PipelineStatus:
 
 
 def _normalize_output_path(output_path: str | Path) -> str:
+    """Convierte un path de archivo a ruta relativa al directorio raíz del proyecto."""
     path = Path(output_path)
     try:
         return str(path.relative_to(PROJECT_ROOT))
@@ -496,6 +637,7 @@ def _normalize_output_path(output_path: str | Path) -> str:
 
 
 def _merge_errors(existing: list[str], new_errors: list[str]) -> list[str]:
+    """Fusiona dos listas de mensajes de error sin duplicar textos equivalentes."""
     merged = _sanitize_errors(existing)
     for error in _sanitize_errors(new_errors):
         if error not in merged:
@@ -504,6 +646,7 @@ def _merge_errors(existing: list[str], new_errors: list[str]) -> list[str]:
 
 
 def _sanitize_errors(errors: list[str]) -> list[str]:
+    """Sanitiza y trunca mensajes de error a un formato seguro de longitud acotada."""
     if not isinstance(errors, list):
         return []
     sanitized: list[str] = []
@@ -515,4 +658,5 @@ def _sanitize_errors(errors: list[str]) -> list[str]:
 
 
 def _now() -> str:
+    """Devuelve la marca temporal UTC actual formateada en ISO 8601."""
     return datetime.now(timezone.utc).isoformat()

@@ -1,3 +1,12 @@
+"""Modelo ORM para la tabla generated_posts.
+
+Representa el contenido generado (copy e imagen) vinculado con su tema y trazabilidad.
+
+Referencias arquitectónicas:
+    - ADR-0003: Persistencia relacional con SQLite y SQLAlchemy 2.0.
+    - ADR-0012: Flujo en dos etapas para publicación en Instagram.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Optional
@@ -13,6 +22,8 @@ if TYPE_CHECKING:
 
 
 class GeneratedPost(Base):
+    """Entidad relacional de posts generados en borrador o finalizados."""
+
     __tablename__ = "generated_posts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

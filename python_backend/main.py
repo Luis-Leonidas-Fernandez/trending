@@ -1,3 +1,15 @@
+"""Punto de entrada principal de la aplicación FastAPI del sistema Trending.
+
+Configura la inicialización de base de datos, middlewares de CORS, servicio
+de archivos estáticos para assets generados en Fase 5, manejo de errores de validación
+y registro de todos los routers de la API.
+
+Referencias arquitectónicas:
+    - ADR-0002: Modularización en FastAPI y desacoplamiento de routers.
+    - ADR-0003: Persistencia relacional con SQLite y SQLAlchemy 2.0.
+    - ADR-0011: Almacenamiento local de assets y esquema canónico de entregables.
+"""
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -37,6 +49,7 @@ app.mount("/assets/participante-5", StaticFiles(directory=ASSETS_DIR), name="par
 
 @app.exception_handler(RequestValidationError)
 def validation_exception_handler(request, exc):
+    """Intercepta errores de validación de Pydantic retornando respuesta HTTP 422 estándar."""
     return JSONResponse(
         status_code=422,
         content={
@@ -49,6 +62,7 @@ def validation_exception_handler(request, exc):
 
 @app.get("/")
 def root():
+    """Endpoint raíz que retorna información del backend y catálogo de endpoints disponibles."""
     return {
         "success": True,
         "message": "API FastAPI del sistema trending de Instagram",

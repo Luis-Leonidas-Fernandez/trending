@@ -942,7 +942,13 @@
   </style>
 </head>
 <body>
+  <!-- =========================================================================
+       ARQUITECTURA FRONTEND — TRENDING PIPELINE DASHBOARD
+       Tecnología: Vanilla HTML5 / Modern CSS / Vanilla ES2020 JavaScript (ADR-0006).
+       Diseño: Shell desacoplado, soporte de temas claro/oscuro, polling HTTP sin build steps.
+       ========================================================================= -->
   <div class="AppShell">
+    <!-- Sidebar: Navegación lateral persistente y accesos directos -->
     <aside class="Sidebar" aria-label="Navegación principal">
       <div class="brand-card" aria-label="Trending Pipeline">
         <span class="brand-mark"><span class="mark" aria-hidden="true"></span><span>TrendAI</span></span>
@@ -971,6 +977,7 @@
     </aside>
 
     <main class="main-column">
+      <!-- Topbar: Búsqueda, ejecutor rápido, selector de tema y modal OAuth de Spartan -->
       <header class="Topbar">
         <div class="mobile-brand"><span class="mark" aria-hidden="true" style="display:inline-grid;vertical-align:middle;margin-right:8px"></span>Trending Pipeline</div>
         <label class="search-box" aria-label="Buscar en el pipeline">
@@ -990,6 +997,7 @@
         </div>
       </header>
 
+      <!-- Navegación responsive para pantallas móviles -->
       <nav class="mobile-nav" aria-label="Navegación móvil">
         <a class="nav-item" href="#pipeline"><span class="icon-dot">PL</span><span class="nav-label">Pipeline</span></a>
         <a class="nav-item" href="history.html"><span class="icon-dot">HI</span><span class="nav-label">Historial</span></a>
@@ -998,12 +1006,14 @@
         <a class="nav-item" href="#posts"><span class="icon-dot">PO</span><span class="nav-label">Posts</span></a>
       </nav>
 
+      <!-- Hero Section: Presentación y objetivo central -->
       <section class="Hero" id="explore" data-od-id="hero">
         <div class="orb" aria-hidden="true"></div>
         <h1>Genera Post de tendencias</h1>
         <p>Convertí tendencias del momento en ideas listas para crear, revisar y publicar antes que todos.</p>
       </section>
 
+      <!-- PhaseCards: Representación visual sincronizada de las 6 fases del pipeline -->
       <section class="PhaseCards" aria-label="Fases del pipeline" data-od-id="phase-cards">
         <article class="phase-card is-complete" data-phase-card="Descubrir"><span class="phase-orb" aria-hidden="true"></span><span class="phase-icon">GT</span><strong>Descubrir</strong><small data-phase-status>completo</small></article>
         <article class="phase-card is-complete" data-phase-card="Filtrar"><span class="phase-orb" aria-hidden="true"></span><span class="phase-icon">DU</span><strong>Filtrar</strong><small data-phase-status>completo</small></article>
@@ -1013,6 +1023,7 @@
         <article class="phase-card is-pending" data-phase-card="Medir"><span class="phase-orb" aria-hidden="true"></span><span class="phase-icon">FE</span><strong>Medir</strong><small data-phase-status>pendiente</small></article>
       </section>
 
+      <!-- PipelinePanel: Constructor de ejecución por pasos y stepper de estado en tiempo real (ADR-0014, ADR-0015) -->
       <section class="PipelinePanel" id="pipeline" data-od-id="pipeline-panel">
         <article class="prompt-card">
           <div class="prompt-meta">
@@ -1027,6 +1038,7 @@
               <div class="detail-pill"><span>estado</span><strong data-status-label>sin ejecutar</strong></div>
             </div>
 
+            <!-- Conexión OAuth con Spartan Provider (ADR-0010) -->
             <div class="ai-auth-card" aria-label="Conexión de inteligencia artificial">
               <div class="ai-auth-copy">
                 <strong>Conexión IA</strong>
@@ -1038,6 +1050,7 @@
                 <button class="ai-auth-button" type="button" data-ai-connect="gemini">Conectar Gemini</button>
               </div>
             </div>
+            <!-- Selector interactivo de pasos del flujo (ADR-0002, ADR-0014) -->
             <div class="flow-builder" aria-label="Constructor de ejecución del pipeline">
               <div class="flow-header">
                 <div>
@@ -1071,6 +1084,7 @@
           </div>
         </article>
 
+        <!-- Stepper vertical de estado en tiempo real (ADR-0014) -->
         <aside class="pipeline-state" aria-label="Estado del pipeline">
           <div class="pipeline-state__header">
             <div>
@@ -1141,6 +1155,7 @@
         </aside>
       </section>
 
+      <!-- AuditPanel: Auditoría visual del post, simulación de publicación (ADR-0012) y métricas de calidad (ADR-0013) -->
       <section class="AuditPanel" id="posts" data-od-id="post-audit-panel" aria-label="Post finalizado para auditoría">
         <article class="audit-preview">
           <div class="audit-preview__media" data-audit-media>
@@ -1192,6 +1207,19 @@
   </div>
 
   <script>
+    /**
+     * @file Controlador del cliente interactivo Dashboard (Trending Pipeline).
+     *
+     * Responsable de:
+     * - Coordinación visual del pipeline (6 fases: Descubrir, Filtrar, Elegir, Crear, Publicar, Medir).
+     * - Comunicación REST con el backend FastAPI (ADR-0002, ADR-0006).
+     * - Cancelación cooperativa con AbortController y POST /api/pipeline/cancel (ADR-0015).
+     * - Polling de sincronización del estado del pipeline (/api/pipeline/state) y Spartan Provider (/ai/providers/status) (ADR-0010, ADR-0014).
+     * - Gestión de publicación simulada para auditoría sin impacto externo en Instagram (ADR-0012).
+     * - Métricas locales de calidad en Fase 7 (ADR-0013).
+     * - Restauración del modo reutilización de temas desde query params (?reuse_topic=ID) (ADR-0009).
+     */
+
     const API_ORIGIN = 'http://127.0.0.1:8000';
     const API_BASE_URL = `${API_ORIGIN}/api`;
     const flowSteps = Array.from(document.querySelectorAll('[data-step]'));
@@ -1277,6 +1305,11 @@
       Medir: { pending: 'Esperando ejecución.', current: 'Validando resultado final.', complete: 'Calidad local validada.', draft: 'Calidad local con advertencias.', error: 'Falló la medición local.' },
     };
 
+    /**
+     * Aplica el tema visual ('dark' o 'light') al documento y persiste en localStorage.
+     *
+     * @param {'dark' | 'light'} theme
+     */
     function applyTheme(theme) {
       const isDark = theme === 'dark';
       document.documentElement.dataset.theme = theme;
@@ -1286,14 +1319,27 @@
       window.localStorage.setItem('trending-theme', theme);
     }
 
+    /**
+     * Retorna la lista de elementos DOM de los pasos seleccionados actualmente.
+     *
+     * @returns {HTMLElement[]}
+     */
     function getSelectedSteps() {
       return flowSteps.filter((step) => step.getAttribute('aria-pressed') === 'true');
     }
 
+    /**
+     * Retorna los slugs identificadores de los pasos seleccionados.
+     *
+     * @returns {string[]}
+     */
     function selectedStepSlugs() {
       return getSelectedSteps().map((step) => stepSlugByName[step.dataset.step]).filter(Boolean);
     }
 
+    /**
+     * Actualiza el resumen textual de pasos seleccionados en la barra de control.
+     */
     function updateSelectedSummary() {
       const selected = getSelectedSteps().map((step) => step.dataset.step);
       selectedSummary.textContent = selected.length
@@ -1301,6 +1347,14 @@
         : 'Seleccioná al menos una parte del pipeline';
     }
 
+    /**
+     * Activa o desactiva el modo de reutilización manual de temas (ADR-0009).
+     *
+     * En este modo, los pasos aguas arriba (Descubrir, Filtrar, Elegir) se bloquean
+     * porque el tema ya fue elegido previamente en el historial.
+     *
+     * @param {boolean} enabled
+     */
     function setManualReuseMode(enabled) {
       isManualReuseMode = Boolean(enabled);
       flowSteps.forEach((step) => {
@@ -1317,6 +1371,12 @@
       updateSelectedSummary();
     }
 
+    /**
+     * Actualiza el estado visual de un paso específico en el stepper lateral.
+     *
+     * @param {string} stepName - Nombre del paso (ej. 'Descubrir').
+     * @param {'pending' | 'current' | 'complete' | 'draft' | 'error'} state
+     */
     function setPipelineStepState(stepName, state) {
       const step = pipelineStateSteps.find((item) => item.dataset.stateStep === stepName);
       if (!step) return;
@@ -1334,10 +1394,19 @@
       description.textContent = descriptions[state] || descriptions.pending || 'Esperando ejecución.';
     }
 
+    /**
+     * Restablece todos los pasos del stepper lateral al estado inicial 'pending'.
+     */
     function resetPipelineStateView() {
       pipelineStateSteps.forEach((step) => setPipelineStepState(step.dataset.stateStep, 'pending'));
     }
 
+    /**
+     * Actualiza la tarjeta visual de fase superior según su estado de ejecución.
+     *
+     * @param {string} stepName - Nombre del paso.
+     * @param {'running' | 'complete' | 'next' | 'pending'} state
+     */
     function setPhaseCardState(stepName, state) {
       const card = phaseCards.find((item) => item.dataset.phaseCard === stepName);
       if (!card) return;
@@ -1358,6 +1427,11 @@
       }
     }
 
+    /**
+     * Inicializa las tarjetas de fase para una corrida, marcando las seleccionadas como 'running'.
+     *
+     * @param {string[]} steps - Slugs de pasos seleccionados.
+     */
     function resetPhaseCardsForRun(steps) {
       const selected = new Set(steps);
       phaseCards.forEach((card) => {
@@ -1372,20 +1446,39 @@
       });
     }
 
+    /**
+     * Resalta con animación la tarjeta de la fase en ejecución activa en este instante.
+     *
+     * @param {string} stepName
+     */
     function highlightActivePhaseCard(stepName) {
       phaseCards.forEach((card) => card.classList.remove('is-active-run'));
       const card = phaseCards.find((item) => item.dataset.phaseCard === stepName);
       if (card) card.classList.add('is-active-run');
     }
 
+    /**
+     * Marca visualmente el botón del selector correspondiente al paso en curso.
+     *
+     * @param {string} stepName
+     */
     function setActiveFlowStep(stepName) {
       flowSteps.forEach((step) => step.classList.toggle('is-active-run', step.dataset.step === stepName));
     }
 
+    /**
+     * Limpia los indicadores de ejecución activa de los botones del selector.
+     */
     function clearRunningFlowSteps() {
       flowSteps.forEach((step) => step.classList.remove('is-running', 'is-active-run'));
     }
 
+    /**
+     * Marca la siguiente tarjeta de fase como 'next' si existe un paso posterior en la secuencia.
+     *
+     * @param {string[]} steps
+     * @param {number} currentIndex
+     */
     function markNextPhaseCard(steps, currentIndex) {
       const nextStep = steps[currentIndex + 1];
       if (!nextStep) return;
@@ -1393,6 +1486,12 @@
       if (nextName) setPhaseCardState(nextName, 'next');
     }
 
+    /**
+     * Cancela cooperativamente la corrida del pipeline en curso (ADR-0015).
+     *
+     * Notifica inmediatamente al backend mediante POST /api/pipeline/cancel con keepalive,
+     * y aborta la petición local activa mediante AbortController.
+     */
     function stopPipelineRun() {
       if (!isPipelineRunning) return;
       commandLineText.textContent = 'Cancelando ejecución en backend...';
@@ -1420,6 +1519,11 @@
     }
 
 
+    /**
+     * Bloquea o desbloquea los botones interactivos del pipeline según el estado de procesamiento.
+     *
+     * @param {boolean} isBusy
+     */
     function setBusy(isBusy) {
       [...pipelineRunButtons, clearSelection, runAll, ...inspectButtons].forEach((button) => {
         button.disabled = isBusy;
@@ -1431,9 +1535,21 @@
       runSelectedLabel.textContent = isBusy ? 'Detener flujo' : 'Correr selección';
     }
 
+    /**
+     * Formatea el ID de corrida para presentación breve (primeros 8 caracteres).
+     *
+     * @param {string|null} runId
+     * @returns {string}
+     */
     function shortSession(runId) {
       return runId ? `Sesión ${String(runId).slice(0, 8)}` : 'Sesión nueva';
     }
+
+    /**
+     * Sincroniza las tarjetas de fase superiores con el estado del pipeline recibido del backend.
+     *
+     * @param {object} state - Objeto del pipeline_state.json.
+     */
     function renderPhaseCardsFromState(state) {
       if (!state || isPipelineRunning) return;
       const completedSteps = new Set(state.completed_steps || []);
@@ -1456,6 +1572,13 @@
     }
 
 
+    /**
+     * Renderiza el estado completo del pipeline en la interfaz (ADR-0014).
+     *
+     * Actualiza stepper, insignias de estado, versión, etiquetas de sesión y modo de reutilización.
+     *
+     * @param {object} state
+     */
     function renderState(state) {
       if (!state) return;
 
@@ -1506,6 +1629,12 @@
     }
 
 
+    /**
+     * Actualiza la insignia y mensaje del componente de autenticación de IA de Spartan (ADR-0010).
+     *
+     * @param {Array<{provider: string, connected: boolean, reconnect_required?: boolean}>} statuses
+     * @returns {boolean} True si al menos un proveedor se encuentra conectado.
+     */
     function renderAiAuthStatus(statuses) {
       const list = Array.isArray(statuses) ? statuses : [];
       const connected = list.filter((item) => item.connected);
@@ -1531,6 +1660,11 @@
       return false;
     }
 
+    /**
+     * Consulta el estado de los proveedores IA al endpoint /ai/providers/status.
+     *
+     * @returns {Promise<boolean>}
+     */
     async function loadAiAuthStatus() {
       try {
         const payload = await requestJson('/ai/providers/status');
@@ -1543,12 +1677,20 @@
       }
     }
 
+    /**
+     * Detiene el sondeo recurrente del estado de autenticación OAuth de IA.
+     */
     function stopAiAuthPolling() {
       if (aiAuthPollTimer) window.clearInterval(aiAuthPollTimer);
       aiAuthPollTimer = null;
       aiAuthPollAttempts = 0;
     }
 
+    /**
+     * Inicia un sondeo periódico (cada 3s) tras disparar el flujo OAuth con Spartan Provider.
+     *
+     * @param {string} provider - Nombre del proveedor (ej. 'codex', 'gemini').
+     */
     function startAiAuthPolling(provider) {
       stopAiAuthPolling();
       aiAuthPollAttempts = 0;
@@ -1565,6 +1707,11 @@
       }, 3000);
     }
 
+    /**
+     * Inicia el flujo OAuth administrativo abriendo la URL retornada por el backend en una nueva pestaña.
+     *
+     * @param {string} provider
+     */
     async function connectAiProvider(provider) {
       try {
         aiAuthMessage.textContent = `Abriendo autenticación de ${provider}...`;
@@ -1581,6 +1728,13 @@
       }
     }
 
+    /**
+     * Realiza una petición JSON al backend con soporte de AbortSignal y extracción de errores.
+     *
+     * @param {string} path - Ruta relativa (ej. '/pipeline/state').
+     * @param {RequestInit} [options={}]
+     * @returns {Promise<any>}
+     */
     async function requestJson(path, options = {}) {
       const { signal, headers, ...fetchOptions } = options;
       const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -1598,6 +1752,11 @@
       return payload;
     }
 
+    /**
+     * Restaura la vista cuando la página se abre con ?reuse_topic=ID desde el historial (ADR-0009).
+     *
+     * Valida que el pipeline esté en estado manual_history_reuse y selecciona automáticamente 'Crear'.
+     */
     async function restorePreparedTopicReuse() {
       const params = new URLSearchParams(window.location.search);
       const topicId = Number(params.get('reuse_topic'));
@@ -1637,6 +1796,14 @@
     }
 
 
+    /**
+     * Convierte una ruta relativa o absoluta de asset en una URL accesible por el navegador.
+     *
+     * Mapea rutas generadas por Fase 5 a la ruta estática montada en /assets/participante-5/ (ADR-0011).
+     *
+     * @param {string|null} path
+     * @returns {string}
+     */
     function assetUrl(path) {
       if (!path) return '';
       if (/^https?:\/\//i.test(path)) return path;
@@ -1647,6 +1814,12 @@
       return `${API_ORIGIN}/${cleanPath}`;
     }
 
+    /**
+     * Da formato y divide en párrafos legibles un caption extenso para la vista de auditoría.
+     *
+     * @param {string|null} value
+     * @returns {string}
+     */
     function formatCaptionForDisplay(value) {
       const text = String(value || '').trim();
       if (!text) return '';
@@ -1667,6 +1840,11 @@
         .join('\n\n');
     }
 
+    /**
+     * Renderiza el panel de auditoría de post finalizado con imagen, caption, hashtags y log (ADR-0012).
+     *
+     * @param {object|null} auditPayload
+     */
     function renderAudit(auditPayload) {
       const audit = auditPayload || {};
       const post = audit.post || {};
@@ -1706,6 +1884,11 @@
       topic_marked_used: 'Tema marcado como usado',
     };
 
+    /**
+     * Renderiza el puntaje de 0-100% y el checklist de 8 reglas locales de calidad de Fase 7 (ADR-0013).
+     *
+     * @param {object|null} metricsPayload
+     */
     function renderQuality(metricsPayload) {
       const metrics = metricsPayload?.data || metricsPayload || {};
       const checks = metrics.checks || {};
@@ -1725,6 +1908,9 @@
         .join('');
     }
 
+    /**
+     * Carga y renderiza las métricas de calidad de la última corrida (/pipeline/metrics/latest).
+     */
     async function loadMetricsView() {
       try {
         const payload = await requestJson('/pipeline/metrics/latest');
@@ -1735,11 +1921,19 @@
     }
 
 
+    /**
+     * Obtiene los datos del post auditado más reciente (/posts/audit/latest).
+     *
+     * @returns {Promise<object|null>}
+     */
     async function loadActiveAudit() {
       const payload = await requestJson('/posts/audit/latest');
       return payload.data || null;
     }
 
+    /**
+     * Actualiza el panel de auditoría consultando el post más reciente.
+     */
     async function loadAuditView() {
       try {
         renderAudit(await loadActiveAudit());
@@ -1749,6 +1943,9 @@
       }
     }
 
+    /**
+     * Ejecuta la publicación simulada para un post activo en draft (/posts/{id}/publish-simulated) (ADR-0012).
+     */
     async function simulateLatestPublication() {
       try {
         setBusy(true);
@@ -1770,6 +1967,11 @@
       }
     }
 
+    /**
+     * Asegura que el post activo esté publicado en modo simulado antes de ejecutar la medición de Fase 7.
+     *
+     * @param {AbortSignal} signal
+     */
     async function ensureSimulatedPublicationBeforeMeasure(signal) {
       const activeAudit = await loadActiveAudit();
       const post = activeAudit?.post;
@@ -1793,6 +1995,9 @@
       await loadAuditView();
     }
 
+    /**
+     * Consulta y renderiza el estado activo del pipeline (/pipeline/state).
+     */
     async function loadPipelineState() {
       try {
         const payload = await requestJson('/pipeline/state');
@@ -1802,6 +2007,14 @@
       }
     }
 
+    /**
+     * Pausa la ejecución de la UI para garantizar que cada paso sea visible al menos un tiempo mínimo.
+     *
+     * @param {number} startedAt - Marca de tiempo performance.now() de inicio del paso.
+     * @param {AbortSignal} signal
+     * @param {number} [minimumDuration=1100] - Tiempo mínimo en ms.
+     * @returns {Promise<void>}
+     */
     function waitForVisibleStepDuration(startedAt, signal, minimumDuration = 1100) {
       const remaining = Math.max(0, minimumDuration - (performance.now() - startedAt));
       if (remaining === 0) return Promise.resolve();
@@ -1826,6 +2039,11 @@
       });
     }
 
+    /**
+     * Desmarca los botones de los pasos completados exitosamente.
+     *
+     * @param {string[]} steps
+     */
     function deselectExecutedSteps(steps) {
       const executed = new Set(steps);
       flowSteps.forEach((step) => {
@@ -1835,6 +2053,14 @@
       updateSelectedSummary();
     }
 
+    /**
+     * Orquesta la ejecución secuencial de los pasos seleccionados del pipeline (ADR-0002, ADR-0014, ADR-0015).
+     *
+     * Actualiza el stepper y tarjetas de fase paso a paso, gestiona la señal de cancelación y
+     * actualiza las vistas de auditoría y métricas tras cada paso relevante.
+     *
+     * @param {string[]} steps - Slugs de los pasos a ejecutar.
+     */
     async function runPipeline(steps) {
       if (isPipelineRunning) {
         stopPipelineRun();
@@ -1937,6 +2163,9 @@
       }
     }
 
+    /**
+     * Reinicia el estado del pipeline en el backend mediante DELETE /api/pipeline/state.
+     */
     async function resetPipelineOnServer() {
       setBusy(true);
       try {

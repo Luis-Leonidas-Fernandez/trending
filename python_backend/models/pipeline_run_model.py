@@ -1,3 +1,13 @@
+"""Modelo ORM para la tabla pipeline_runs.
+
+Persiste las ejecuciones históricas del pipeline, correlacionando pasos, outputs,
+temas y puntajes de calidad en filas indexadas por run_id.
+
+Referencias arquitectónicas:
+    - ADR-0014: Estado unificado de pipeline y persistencia relacional de ejecuciones.
+    - ADR-0003: Persistencia relacional con SQLite y SQLAlchemy 2.0.
+"""
+
 from __future__ import annotations
 
 from typing import Optional
@@ -9,6 +19,8 @@ from python_backend.models.base import Base
 
 
 class PipelineRun(Base):
+    """Entidad relacional de corridas de pipeline persistidas para trazabilidad e histórico."""
+
     __tablename__ = "pipeline_runs"
 
     run_id: Mapped[str] = mapped_column(String, primary_key=True)

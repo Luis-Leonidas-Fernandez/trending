@@ -1,3 +1,14 @@
+"""Repositorio de persistencia para publicaciones generadas (GeneratedPost).
+
+Maneja la creación y actualización de posts en la base de datos relacional.
+Utiliza `joinedload(GeneratedPost.topic)` en las consultas para evitar problemas
+de consultas N+1 y cargar oportunamente el título del tema asociado.
+
+Referencias arquitectónicas:
+    - ADR-0003: Persistencia relacional con SQLite y SQLAlchemy 2.0.
+    - ADR-0012: Flujo en dos etapas para publicación en Instagram.
+"""
+
 from typing import Dict, List, Optional
 
 from sqlalchemy.orm import joinedload
@@ -7,6 +18,7 @@ from python_backend.models.post_model import GeneratedPost
 
 
 def _post_to_dict(post: GeneratedPost) -> Dict:
+    """Transforma una entidad GeneratedPost a diccionario desacoplado, incluyendo el tema."""
     return {
         "id": post.id,
         "topic_id": post.topic_id,
@@ -21,6 +33,7 @@ def _post_to_dict(post: GeneratedPost) -> Dict:
 
 
 def get_all_posts() -> List[Dict]:
+    """Recupera todas las publicaciones con su tema asociado ordenadas por fecha reciente."""
     with get_session() as session:
         posts = (
             session.query(GeneratedPost)
@@ -32,6 +45,7 @@ def get_all_posts() -> List[Dict]:
 
 
 def get_post_by_id(post_id: int) -> Optional[Dict]:
+    """Obtiene una publicación específica por su ID junto a su relación topic."""
     with get_session() as session:
         post = (
             session.query(GeneratedPost)
@@ -45,6 +59,7 @@ def get_post_by_id(post_id: int) -> Optional[Dict]:
 
 
 def create_post(post_data: Dict) -> Optional[Dict]:
+    """Persiste una nueva publicación en estado draft y recarga el topic asociado."""
     with get_session() as session:
         post = GeneratedPost(
             topic_id=post_data["topic_id"],
@@ -67,6 +82,7 @@ def create_post(post_data: Dict) -> Optional[Dict]:
 
 
 def update_post_status(post_id: int, status: str) -> Optional[Dict]:
+    """Actualiza el estado de una publicación (e.g. a 'published_simulated')."""
     with get_session() as session:
         post = (
             session.query(GeneratedPost)

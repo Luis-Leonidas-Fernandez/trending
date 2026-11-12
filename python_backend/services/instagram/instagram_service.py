@@ -4,6 +4,11 @@ Fase 6A consume el output de Fase 5, persiste el post generado en SQLite y
 produce un output versionado auditable. No publica en Instagram todavía y no
 marca el tema como usado; eso queda para una subfase posterior cuando la
 publicación/preparación final sea exitosa.
+
+Referencias arquitectónicas:
+    - ADR-0012: Flujo en dos etapas para publicación en Instagram (6A borrador y 6B simulada).
+    - ADR-0003: Persistencia relacional con SQLite y SQLAlchemy 2.0.
+    - ADR-0005: Formato versionado y canónico para entregables JSON inter-fases.
 """
 
 from __future__ import annotations
@@ -52,7 +57,11 @@ def publish_post(post: dict[str, Any]) -> dict[str, Any]:
 
 
 def simulate_publication(post_id: int) -> dict[str, Any]:
-    """Cierra una publicación falsa para auditoría sin llamar a Instagram real."""
+    """Cierra una publicación falsa para auditoría sin llamar a Instagram real.
+
+    Transiciona el post a 'published_simulated', genera un registro de auditoría
+    en la tabla de logs y marca el tema asociado como usado (used = 1) en SQLite.
+    """
 
     if not isinstance(post_id, int) or isinstance(post_id, bool) or post_id <= 0:
         raise InstagramServiceError("post_id debe ser un entero positivo")
@@ -135,7 +144,7 @@ def process_simulated_publication(
     post_id: int,
     output_dir: str | Path | None = None,
 ) -> Path:
-    """Genera un output auditable para la publicación simulada final."""
+    """Genera un output auditable para la publicación simulada final (Fase 6B)."""
 
     run_id = uuid.uuid4()
     destination_dir = Path(output_dir) if output_dir is not None else DEFAULT_OUTPUT_DIR
@@ -207,6 +216,7 @@ def process_ai_output(
 
 
 def _load_phase_5_output(input_path: Path) -> ParticipantOutput:
+    """Carga y valida el archivo entregable de Fase 5."""
     try:
         payload = json.loads(input_path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
@@ -232,6 +242,7 @@ def _load_phase_5_output(input_path: Path) -> ParticipantOutput:
 
 
 def _validate_selected_topic(topic: Any) -> dict[str, Any]:
+    """Valida la consistencia estructural del tema seleccionado."""
     if not isinstance(topic, dict):
         raise InstagramServiceError("data.selected_topic debe ser un objeto")
     topic_id = topic.get("id")
@@ -245,6 +256,7 @@ def _validate_selected_topic(topic: Any) -> dict[str, Any]:
 
 
 def _post_payload_from_ai_output(source_output: ParticipantOutput, selected_topic: dict[str, Any]) -> dict[str, Any]:
+    """Construye el payload para persistir un post a partir del entregable de IA."""
     caption = _clean_multiline_text(source_output.data.get("caption"))
     description = _clean_text(source_output.data.get("description"))
     hashtags = _format_hashtags(source_output.data.get("hashtags"))
@@ -264,6 +276,7 @@ def _post_payload_from_ai_output(source_output: ParticipantOutput, selected_topi
 
 
 def _format_hashtags(value: Any) -> str | None:
+    """Formatea una lista de strings o texto a una cadena limpia de hashtags."""
     if isinstance(value, list):
         hashtags = [_clean_text(item) for item in value]
         hashtags = [item if item.startswith("#") else f"#{item}" for item in hashtags if item]
@@ -283,6 +296,7 @@ def _build_payload(
     operation: dict[str, Any],
     used_fallback: bool,
 ) -> dict[str, Any]:
+    """Genera el payload del entregable de Fase 6A."""
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": str(run_id),
@@ -312,6 +326,7 @@ def _build_payload(
 
 
 def _build_error_payload(run_id: uuid.UUID, error: Exception, input_path: Path) -> dict[str, Any]:
+    """Genera el payload de fallo auditable para Fase 6."""
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": str(run_id),
@@ -333,17 +348,20 @@ def _build_error_payload(run_id: uuid.UUID, error: Exception, input_path: Path) 
 
 
 def _write_json(output_path: Path, payload: dict[str, Any]) -> None:
+    """Escribe el entregable JSON formateado."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _clean_text(value: Any) -> str:
+    """Elimina espacios redundantes."""
     if value is None:
         return ""
     return re.sub(r"\s+", " ", str(value)).strip()
 
 
 def _clean_multiline_text(value: Any) -> str:
+    """Limpia textos multilínea respetando párrafos."""
     if value is None:
         return ""
     text = str(value).replace("\r\n", "\n").replace("\r", "\n")
@@ -357,10 +375,12 @@ def _clean_multiline_text(value: Any) -> str:
 
 
 def _sanitize_errors(errors: Any) -> list[str]:
+    """Sanitiza una lista de errores."""
     if not isinstance(errors, list):
         return []
     return [_sanitize_error(error) for error in errors if _sanitize_error(error)]
 
 
 def _sanitize_error(error: Any) -> str:
+    """Trunca el mensaje de error a 240 caracteres."""
     return " ".join(str(error).split())[:240]

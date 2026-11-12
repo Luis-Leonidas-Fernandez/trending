@@ -1,3 +1,12 @@
+"""Modelo ORM para la tabla trending_topics.
+
+Representa los temas descubiertos, deduplicados y persistidos en SQLite.
+
+Referencias arquitectónicas:
+    - ADR-0003: Persistencia relacional con SQLite y SQLAlchemy 2.0.
+    - ADR-0008: Deduplicación por normalized_title exacto y persistencia relacional.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Optional
@@ -12,6 +21,8 @@ if TYPE_CHECKING:
 
 
 class TrendingTopic(Base):
+    """Entidad relacional de temas de tendencia descubiertos y filtrados."""
+
     __tablename__ = "trending_topics"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

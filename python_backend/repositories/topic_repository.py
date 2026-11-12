@@ -1,3 +1,15 @@
+"""Repositorio de persistencia para temas de tendencia (TrendingTopic).
+
+Implementa el patrón repositorio desacoplando la lógica de negocio de la
+sesión de base de datos. Transforma los modelos ORM en diccionarios desacoplados
+dentro del bloque with get_session() para evitar DetachedInstanceError fuera del scope.
+
+Referencias arquitectónicas:
+    - ADR-0003: Persistencia relacional con SQLite y SQLAlchemy 2.0.
+    - ADR-0008: Deduplicación por normalized_title exacto y persistencia relacional.
+    - ADR-0012: Flujo en dos etapas para publicación en Instagram.
+"""
+
 from typing import Dict, List, Optional
 
 from python_backend.database.connection import get_session
@@ -5,6 +17,7 @@ from python_backend.models.topic_model import TrendingTopic
 
 
 def _topic_to_dict(topic: TrendingTopic) -> Dict:
+    """Convierte una entidad TrendingTopic a un diccionario desacoplado de la sesión."""
     return {
         "id": topic.id,
         "title": topic.title,
@@ -17,6 +30,7 @@ def _topic_to_dict(topic: TrendingTopic) -> Dict:
 
 
 def get_all_topics() -> List[Dict]:
+    """Obtiene todos los temas registrados ordenados por fecha de creación descendente."""
     with get_session() as session:
         topics = session.query(TrendingTopic).order_by(TrendingTopic.created_at.desc()).all()
 
@@ -24,6 +38,7 @@ def get_all_topics() -> List[Dict]:
 
 
 def get_topic_by_id(topic_id: int) -> Optional[Dict]:
+    """Busca un tema por su clave primaria entera."""
     with get_session() as session:
         topic = session.get(TrendingTopic, topic_id)
 
@@ -34,6 +49,7 @@ def get_topic_by_id(topic_id: int) -> Optional[Dict]:
 
 
 def create_topic(topic_data: Dict) -> Optional[Dict]:
+    """Inserta un nuevo tema en SQLite confirmando la transacción atómicamente."""
     with get_session() as session:
         topic = TrendingTopic(
             title=topic_data["title"],
@@ -50,6 +66,7 @@ def create_topic(topic_data: Dict) -> Optional[Dict]:
 
 
 def mark_topic_used(topic_id: int) -> Optional[Dict]:
+    """Marca un tema como utilizado (used = 1) tras una publicación simulada exitosa."""
     with get_session() as session:
         topic = session.get(TrendingTopic, topic_id)
         if topic is None:

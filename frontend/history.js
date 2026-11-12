@@ -1,3 +1,19 @@
+/**
+ * @file Gestor de la vista de historial de ejecuciones del pipeline.
+ *
+ * Responsable de la interacción del usuario en history.html:
+ * - Consulta y renderizado de corridas históricas (/api/pipeline/runs).
+ * - Renderizado de línea de tiempo por fases y detalle correlacionado (post, imagen, log, calidad).
+ * - Filtros por rango de fechas y temas.
+ * - Flujo de confirmación para reutilización de temas (/api/pipeline/topics/{id}/reuse).
+ * - Gestión de tema visual claro/oscuro con persistencia en localStorage.
+ *
+ * Relación con ADRs:
+ * - ADR-0006: Frontend desacoplado en Vanilla JavaScript sin dependencias de compilación.
+ * - ADR-0009: Selección y reutilización manual de temas en Fase 4.
+ * - ADR-0014: Visualización del historial persistente de corridas almacenado en SQLite.
+ */
+
 const API_ORIGIN = 'http://127.0.0.1:8000';
 const API_BASE_URL = `${API_ORIGIN}/api`;
 const allStepSlugs = ['descubrir', 'filtrar', 'elegir', 'crear', 'publicar', 'medir'];
@@ -49,6 +65,11 @@ let historyMeta = {};
 let selectedRunId = null;
 let reuseConfirmationTopicId = null;
 
+/**
+ * Aplica el tema visual ('dark' o 'light') al documento y sincroniza el botón y almacenamiento local.
+ *
+ * @param {'dark' | 'light'} theme
+ */
 function applyTheme(theme) {
   const isDark = theme === 'dark';
   document.documentElement.dataset.theme = theme;
@@ -58,6 +79,14 @@ function applyTheme(theme) {
   window.localStorage.setItem('trending-theme', theme);
 }
 
+/**
+ * Realiza una petición HTTP a la API REST del backend con parseo JSON automático y manejo de errores.
+ *
+ * @param {string} path - Ruta relativa al endpoint de la API (ej. '/pipeline/runs').
+ * @param {RequestInit} [options={}] - Opciones de fetch (método, cuerpo, cabeceras).
+ * @returns {Promise<any>}
+ * @throws {Error} Si el backend responde con código de estado HTTP no exitoso.
+ */
 async function requestJson(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
@@ -68,24 +97,54 @@ async function requestJson(path, options = {}) {
   return payload;
 }
 
+/**
+ * Formatea un identificador de corrida truncándolo a 8 caracteres para visualización compacta.
+ *
+ * @param {string|null} runId
+ * @returns {string}
+ */
 function shortSession(runId) {
   return runId ? `Sesión ${String(runId).slice(0, 8)}` : 'Sesión nueva';
 }
 
+/**
+ * Retorna la clase CSS de insignia ('badge') según el estado de la corrida del pipeline.
+ *
+ * @param {string} status
+ * @returns {string}
+ */
 function badgeClassForStatus(status) {
   if (status === 'error' || status === 'cancelled') return 'badge error';
   if (status === 'completed' || status === 'published' || status === 'success') return 'badge success';
   return 'badge draft';
 }
 
+/**
+ * Retorna la etiqueta textual de progreso de pasos completados (ej. '4/6').
+ *
+ * @param {string[]} steps
+ * @returns {string}
+ */
 function completedLabel(steps) {
   return `${Array.isArray(steps) ? steps.length : 0}/${allStepSlugs.length}`;
 }
 
+/**
+ * Retorna el porcentaje de calidad formateado o 'sin medir'.
+ *
+ * @param {number|null} score
+ * @returns {string}
+ */
 function qualityLabel(score) {
   return Number.isFinite(score) ? `${score}%` : 'sin medir';
 }
 
+/**
+ * Normaliza la estructura de una corrida obtenida de la API para consumo en vistas.
+ *
+ * @param {object} item
+ * @returns {object} Objeto de corrida con propiedades normalizadas y valores por defecto.
+ */
 function normalizeRun(item) {
   const topic = item?.topic && typeof item.topic === 'object' ? item.topic : null;
   const post = item?.post && typeof item.post === 'object' ? item.post : null;
@@ -103,6 +162,12 @@ function normalizeRun(item) {
   };
 }
 
+/**
+ * Formatea una fecha ISO en formato localizado es-AR con fecha y hora corta.
+ *
+ * @param {string|null} value
+ * @returns {string}
+ */
 function formatRunDate(value) {
   const parsed = value ? new Date(value) : null;
   if (!parsed || Number.isNaN(parsed.getTime())) return 'sin fecha';
@@ -112,6 +177,12 @@ function formatRunDate(value) {
   }).format(parsed);
 }
 
+/**
+ * Reemplaza el contenido de un contenedor con un único elemento de mensaje o estado vacío.
+ *
+ * @param {HTMLElement} container
+ * @param {string} message
+ */
 function setMessage(container, message) {
   const item = document.createElement('li');
   item.className = 'history-empty';
@@ -119,6 +190,9 @@ function setMessage(container, message) {
   container.replaceChildren(item);
 }
 
+/**
+ * Actualiza el bloque de resumen general superior con la corrida más reciente y métricas globales.
+ */
 function renderSummary() {
   const latest = historyItems[0] || null;
   historyTotal.textContent = String(historyMeta.available_runs ?? historyItems.length);
@@ -128,6 +202,9 @@ function renderSummary() {
   historyQuality.textContent = qualityLabel(latest?.scoreValue);
 }
 
+/**
+ * Restablece el botón y mensaje de confirmación de reutilización de temas al estado inicial.
+ */
 function resetReuseConfirmation() {
   reuseConfirmationTopicId = null;
   historyReuse.classList.remove('is-confirming');
@@ -137,6 +214,11 @@ function resetReuseConfirmation() {
   historyActionStatus.classList.remove('is-error');
 }
 
+/**
+ * Limpia el panel de detalle lateral y muestra un mensaje indicativo.
+ *
+ * @param {string} [message='Seleccioná una corrida para revisar su evidencia.']
+ */
 function clearDetail(message = 'Seleccioná una corrida para revisar su evidencia.') {
   selectedRunId = null;
   historyDetailTitle.textContent = 'Sin ejecución seleccionada';
@@ -152,6 +234,11 @@ function clearDetail(message = 'Seleccioná una corrida para revisar su evidenci
   resetReuseConfirmation();
 }
 
+/**
+ * Construye dinámicamente la lista de pasos (stepper/timeline) de una corrida indicando estado y descripción.
+ *
+ * @param {object} run
+ */
 function buildTimeline(run) {
   const completedSet = new Set(run.completedSteps);
   const fragment = document.createDocumentFragment();
@@ -183,6 +270,11 @@ function buildTimeline(run) {
   historyTimeline.replaceChildren(fragment);
 }
 
+/**
+ * Renderiza los datos completos de una corrida en el panel de detalle correlacionado.
+ *
+ * @param {object} item - Objeto de corrida retornado por /api/pipeline/runs/{id}.
+ */
 function renderDetail(item) {
   const run = normalizeRun(item);
   const post = item?.post && typeof item.post === 'object' ? item.post : null;
@@ -216,6 +308,12 @@ function renderDetail(item) {
   buildTimeline(run);
 }
 
+/**
+ * Crea el elemento DOM de botón interactivo para una corrida en la lista lateral.
+ *
+ * @param {object} run
+ * @returns {HTMLLIElement}
+ */
 function createRunButton(run) {
   const item = document.createElement('li');
   const button = document.createElement('button');
@@ -251,6 +349,9 @@ function createRunButton(run) {
   return item;
 }
 
+/**
+ * Renderiza la lista completa de corridas filtradas en el panel izquierdo.
+ */
 function renderRunList() {
   const filtersActive = Boolean(
     historyDateFrom.value || historyDateTo.value || historyTopicFilter.value.trim()
@@ -276,6 +377,11 @@ function renderRunList() {
   historyRuns.replaceChildren(fragment);
 }
 
+/**
+ * Construye la cadena de consulta (query string) con los filtros activos de fecha y tema.
+ *
+ * @returns {string}
+ */
 function historyQuery() {
   const params = new URLSearchParams({ limit: '50' });
   if (historyDateFrom.value) params.set('date_from', historyDateFrom.value);
@@ -284,6 +390,11 @@ function historyQuery() {
   return params.toString();
 }
 
+/**
+ * Carga desde el backend los detalles correlacionados de una corrida específica por su ID.
+ *
+ * @param {string} runId
+ */
 async function loadRunDetail(runId) {
   selectedRunId = runId;
   renderRunList();
@@ -299,6 +410,9 @@ async function loadRunDetail(runId) {
   }
 }
 
+/**
+ * Consulta la lista de corridas al backend y actualiza toda la interfaz de la vista de historial.
+ */
 async function loadHistoryView() {
   historyRuns.setAttribute('aria-busy', 'true');
   setMessage(historyRuns, 'Actualizando historial persistente…');
@@ -325,6 +439,11 @@ async function loadHistoryView() {
   }
 }
 
+/**
+ * Maneja el flujo en dos pasos para reutilizar un tema anterior:
+ * Primer clic: Solicita confirmación y advierte al operador.
+ * Segundo clic: Envía POST a /api/pipeline/topics/{id}/reuse y redirige a index.html.
+ */
 async function prepareTopicReuse() {
   const topicId = Number(historyReuse.dataset.topicId);
   const topicTitle = historyReuse.dataset.topicTitle || `tema ${topicId}`;
